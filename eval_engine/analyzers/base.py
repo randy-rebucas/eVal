@@ -43,6 +43,7 @@ class AnalyzerContext:
     files: list[str]
     languages: LanguageReport
     timeout: int = 300
+    offline: bool = False  # no network access: analyzers that need it are skipped (see Analyzer.network_required)
     _cache: dict[str, str | None] = field(default_factory=dict, repr=False)
     _file_set: set[str] = field(init=False, repr=False)
     _ast_cache: dict = field(default_factory=dict, repr=False)
@@ -131,6 +132,9 @@ class Analyzer:
     categories: ClassVar[tuple[Category, ...]]
     languages: ClassVar[tuple[str, ...]] = ()  # empty = language-agnostic
     tool: ClassVar[str | None] = None  # external executable required (see sandbox.ALLOWED_TOOLS)
+    # Declared internet use: "" = runs entirely on this machine; otherwise "destination: what is sent". Kept in sync
+    # with the code by tests/engine/test_network_declaration.py and documented in docs/NETWORK.md.
+    network_use: ClassVar[str] = ""
     # POSIX RLIMIT_AS for the tool. None disables it for runtimes that mmap large files (the container's
     # cgroup memory limit still bounds real usage).
     address_space_limit: ClassVar[int | None] = 3 * 1024 * 1024 * 1024
@@ -139,6 +143,10 @@ class Analyzer:
         """Return None when the analyzer should run, else a human-readable reason to skip."""
         if self.languages and not any(ctx.languages.has(lang) for lang in self.languages):
             return f"no {'/'.join(self.languages)} files detected"
+        return None
+
+    def network_required(self, ctx: AnalyzerContext) -> str | None:
+        """Why this analyzer needs network access in its current configuration (None = works offline)."""
         return None
 
     def run(self, ctx: AnalyzerContext) -> list[Finding]:  # pragma: no cover - abstract

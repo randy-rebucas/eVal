@@ -10,6 +10,7 @@
 | 4 | Audit dashboard, finding detail + triage, audit history, trends, commit comparison, portfolio dashboard, HTML/Markdown/JSON/SARIF reports, `eval-audit` CLI, GitHub issue creation |
 | 5 | AI provider abstraction (Anthropic, OpenAI, OpenAI-compatible/local), versioned prompts, injection-hardened enricher, per-org AI settings |
 | 6 (partial) | JSON API + tokens, pull-request audits with base-branch baselines, opt-in PR comments, CI gate script and GitHub Actions example |
+| 7 (partial) | eVal Local ([LOCAL_AI.md](LOCAL_AI.md)): `eval-audit --ai local` (loopback-only model server, proxies ignored), `--offline` with network guard, small-model batching and output retry, AI-assisted triage ordering in reports, `eval-audit doctor`. Open: real-model benchmarks, `eval-audit serve` |
 
 Test suite: ~190 tests (unit + integration), run on SQLite and PostgreSQL.
 

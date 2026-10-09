@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from .base import AIError, ProviderInfo
+from .base import AIError, AIOutputError, ProviderInfo
 
 DEFAULT_MODEL = "claude-opus-5-5"
 
@@ -57,7 +57,7 @@ class AnthropicProvider:
         try:
             data = json.loads(text)
         except json.JSONDecodeError as exc:
-            raise AIError("The model returned invalid JSON.") from exc
+            raise AIOutputError("The model returned invalid JSON.") from exc
         if not isinstance(data, dict):
-            raise AIError("The model returned a non-object JSON value.")
+            raise AIOutputError("The model returned a non-object JSON value.")
         return data

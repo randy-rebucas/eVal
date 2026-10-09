@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 
 from ..findings import Category, Confidence, FindingKind, Severity
 from .base import Analyzer, AnalyzerContext, AnalyzerError
@@ -33,10 +34,22 @@ class SemgrepAnalyzer(Analyzer):
     title = "Semgrep (multi-language SAST)"
     categories = (Category.SECURITY,)
     tool = "semgrep"
+    network_use = ("semgrep.dev: downloads registry rules (default p/default); nothing is uploaded, metrics and "
+                   "version check are off. None with a local EVAL_SEMGREP_CONFIG")
     address_space_limit = None  # semgrep-core reserves a large virtual heap; RLIMIT_AS makes it exit 2
 
+    @staticmethod
+    def _config() -> str:
+        return os.environ.get("EVAL_SEMGREP_CONFIG", "p/default")
+
+    def network_required(self, ctx: AnalyzerContext):
+        config = self._config()
+        if Path(config).exists():
+            return None
+        return f"rules {config!r} are fetched from the Semgrep registry; set EVAL_SEMGREP_CONFIG to a local rules path"
+
     def run(self, ctx: AnalyzerContext):
-        config = os.environ.get("EVAL_SEMGREP_CONFIG", "p/default")
+        config = self._config()
         result = self.run_tool(
             ctx,
             # --disable-nosem: `# nosemgrep` comments in the audited code must not suppress findings.

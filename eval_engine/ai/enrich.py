@@ -17,7 +17,7 @@ from importlib import resources
 
 from ..findings import SEVERITY_RANK, Category, Confidence, Finding, FindingKind, Severity
 from ..redaction import redact
-from .base import AIError, AIProvider
+from .base import AIError, AIOutputError, AIProvider
 
 PROMPT_VERSION = "v1"
 DELIM = "untrusted_repository_content"
@@ -89,7 +89,7 @@ def validate_explanations(data: dict, allowed: set[str]) -> dict[str, dict]:
     out: dict[str, dict] = {}
     items = data.get("explanations") if isinstance(data, dict) else None
     if not isinstance(items, list):
-        raise AIError("AI response did not match the expected schema.")
+        raise AIOutputError("AI response did not match the expected schema.")
     for item in items[: len(allowed) * 2]:
         if not isinstance(item, dict) or item.get("id") not in allowed or item["id"] in out:
             continue
@@ -110,7 +110,7 @@ def validate_explanations(data: dict, allowed: set[str]) -> dict[str, dict]:
 
 def validate_summary(data: dict, known_files: set[str]) -> tuple[dict, list[Finding]]:
     if not isinstance(data, dict) or not isinstance(data.get("summary"), str):
-        raise AIError("AI response did not match the expected schema.")
+        raise AIOutputError("AI response did not match the expected schema.")
     risks = data.get("top_risks") if isinstance(data.get("top_risks"), list) else []
     summary = {"summary": _clean_str(data["summary"], 3000),
                "top_risks": [r for r in (_clean_str(x, 300) for x in risks[:5]) if r]}
@@ -137,10 +137,28 @@ def validate_summary(data: dict, known_files: set[str]) -> tuple[dict, list[Find
 
 
 class Enricher:
-    def __init__(self, provider: AIProvider, max_findings: int = 15, max_tokens: int = 16000):
+    def __init__(self, provider: AIProvider, max_findings: int = 15, max_tokens: int = 16000,
+                 batch_size: int | None = None, output_retries: int = 1):
         self.provider = provider
         self.max_findings = max(1, min(max_findings, 50))
         self.max_tokens = max_tokens
+        # Findings explained per request (default: all in one). Small local models do better with short batches.
+        self.batch_size = max(1, batch_size or self.max_findings)
+        self.output_retries = max(0, output_retries)
+        self.retries = 0
+
+    def _ask(self, user: str, schema: dict, validate):
+        """One request, validated; retried only when the model answered with unusable output."""
+        for attempt in range(self.output_retries + 1):
+            try:
+                data = self.provider.complete_json(system=load_prompt("system"), user=user, schema=schema,
+                                                   max_tokens=self.max_tokens)
+                return validate(data)
+            except AIOutputError:
+                if attempt == self.output_retries:
+                    raise
+                self.retries += 1
+        raise AssertionError("unreachable")  # pragma: no cover
 
     def _select(self, findings: list[Finding]) -> list[Finding]:
         conf = {Confidence.HIGH: 2, Confidence.MEDIUM: 1, Confidence.LOW: 0}
@@ -161,38 +179,43 @@ class Enricher:
                 "description": neutralize(f.description)[:800], "evidence": neutralize(f.evidence)[:600]}
 
     def enrich(self, *, findings: list[Finding], languages, scorecard, ctx) -> dict:
-        system = load_prompt("system")
         chosen = self._select(findings)
+        self.retries = 0
         result: dict = {"provider": self.provider.info.name, "model": self.provider.info.model,
                         "prompt_version": PROMPT_VERSION, "explained": 0}
         if not chosen:
             result["summary"] = ""
             return result
         ids = {f"F{i}": f for i, f in enumerate(chosen, start=1)}
-        payload = json.dumps([self._finding_payload(fid, f) for fid, f in ids.items()], indent=1)
+        payloads = [self._finding_payload(fid, f) for fid, f in ids.items()]
         profile = self._profile(languages, scorecard)
         errors = []
-        try:
-            data = self.provider.complete_json(
-                system=system, user=load_prompt("explain").format(profile=profile, findings=payload),
-                schema=EXPLAIN_SCHEMA, max_tokens=self.max_tokens)
-            explained = validate_explanations(data, set(ids))
+        for start in range(0, len(payloads), self.batch_size):
+            batch = payloads[start:start + self.batch_size]
+            allowed = {p["id"] for p in batch}
+            try:
+                explained = self._ask(
+                    load_prompt("explain").format(profile=profile, findings=json.dumps(batch, indent=1)),
+                    EXPLAIN_SCHEMA, lambda data, allowed=allowed: validate_explanations(data, allowed))
+            except AIError as exc:
+                errors.append(str(exc))
+                continue
             for fid, expl in explained.items():
                 ids[fid].ai_explanation = {**expl, "provider": self.provider.info.name,
                                            "model": self.provider.info.model, "prompt_version": PROMPT_VERSION}
-            result["explained"] = len(explained)
-        except AIError as exc:
-            errors.append(str(exc))
+            result["explained"] += len(explained)
         try:
             scores = json.dumps({k: v.score for k, v in scorecard.categories.items()}, sort_keys=True)
-            data = self.provider.complete_json(
-                system=system, user=load_prompt("summary").format(profile=profile, scores=scores, findings=payload),
-                schema=SUMMARY_SCHEMA, max_tokens=self.max_tokens)
-            summary, observations = validate_summary(data, set(ctx.files))
+            summary, observations = self._ask(
+                load_prompt("summary").format(profile=profile, scores=scores,
+                                              findings=json.dumps(payloads, indent=1)),
+                SUMMARY_SCHEMA, lambda data: validate_summary(data, set(ctx.files)))
             result.update(summary)
             result["_observations"] = observations
         except AIError as exc:
             errors.append(str(exc))
+        if self.retries:
+            result["retries"] = self.retries
         if errors:
             result["error"] = "; ".join(dict.fromkeys(errors))
         return result

@@ -30,7 +30,16 @@ class TrivyAnalyzer(Analyzer):
     title = "Trivy (dependencies, IaC, secrets)"
     categories = (Category.DEPENDENCIES, Category.DEVOPS)
     tool = "trivy"
+    network_use = ("mirror.gcr.io / ghcr.io: downloads the vulnerability, Java and checks databases; nothing is "
+                   "uploaded. None under --offline with a pre-seeded EVAL_TRIVY_CACHE_DIR")
     address_space_limit = None  # Trivy mmaps its vulnerability DB; RLIMIT_AS makes that fail
+
+    def network_required(self, ctx: AnalyzerContext):
+        cache = os.environ.get("EVAL_TRIVY_CACHE_DIR")
+        if cache and (Path(cache) / "db" / "trivy.db").is_file():
+            return None
+        return ("downloads its vulnerability database; pre-seed EVAL_TRIVY_CACHE_DIR "
+                "(trivy image --download-db-only --cache-dir DIR)")
 
     def run(self, ctx: AnalyzerContext):
         # Trivy reads ./trivy.yaml and ./.trivyignore from its working directory (the repository) by default.
@@ -47,6 +56,8 @@ class TrivyAnalyzer(Analyzer):
             cache = os.environ.get("EVAL_TRIVY_CACHE_DIR")
             if cache:
                 args += ["--cache-dir", cache]
+            if ctx.offline:  # use the pre-seeded DB and embedded checks; no update or registry lookups
+                args += ["--skip-db-update", "--skip-java-db-update", "--skip-check-update", "--offline-scan"]
             result = self.run_tool(ctx, [*args, "."], ok_codes=(0,))
         return self.parse(ctx, result.stdout)
 

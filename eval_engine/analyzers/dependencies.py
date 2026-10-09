@@ -144,6 +144,7 @@ class OSVAnalyzer(Analyzer):
     name = "osv"
     title = "Known vulnerabilities (OSV.dev)"
     categories = (Category.DEPENDENCIES,)
+    network_use = "api.osv.dev: ecosystem, package name and version of pinned dependencies (no source code)"
 
     def applicable(self, ctx: AnalyzerContext):
         if os.environ.get("EVAL_OSV_ENABLED", "1").lower() in ("0", "false", "no", "off"):
@@ -151,6 +152,9 @@ class OSVAnalyzer(Analyzer):
         if not ctx.languages.manifests:
             return "no dependency manifests found"
         return None
+
+    def network_required(self, ctx: AnalyzerContext):
+        return "queries OSV.dev (use Trivy with a pre-seeded EVAL_TRIVY_CACHE_DIR for offline vulnerability checks)"
 
     def run(self, ctx: AnalyzerContext):
         packages = collect_pinned(ctx)
