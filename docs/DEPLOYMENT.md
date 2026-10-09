@@ -359,7 +359,7 @@ Trade-offs compared with Docker Compose:
 | `EVAL_WORK_DIR` | `/tmp/eval-work` | Checkouts are temporary and stay off the disk |
 | `EVAL_TRIVY_CACHE_DIR` | `/data/trivy-cache` | The Trivy database persists across deploys |
 | `WEB_CONCURRENCY`, `EVAL_WORKER_CONCURRENCY` | `2`, `2` | Gunicorn workers and simultaneous audits; raise with the plan |
-| `maxShutdownDelaySeconds` | `300` | On deploy, running audits get up to 5 minutes to finish; longer ones are marked failed and can be re-run |
+| Shutdown grace period | Render default (30 s) | On deploy, running audits get up to 30 seconds to finish; longer ones are marked failed and can be re-run. Render does not allow `maxShutdownDelaySeconds` on a service with a disk |
 | Region | Oregon (default) | Set `region` in `render.yaml` **before** the first deploy; it cannot be changed later |
 
 Other variables from [.env.example](../.env.example) (GitHub Enterprise, limits, `EVAL_AI_ALLOWED_BASE_URLS`) can

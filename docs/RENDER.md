@@ -157,7 +157,7 @@ eVal is now deployed.
 
 - **Updates:** every push to `main` deploys automatically. Migrations run before the new version starts; if
   they fail, the old version keeps running. Expect a short downtime per deploy (the service has a disk).
-- **Running audits during a deploy** get up to 5 minutes to finish. Anything longer is marked failed and can
+- **Running audits during a deploy** get up to 30 seconds to finish (Render's fixed limit for a service with a disk). Anything longer is marked failed and can
   be re-run.
 - **Settings:** change environment variables under **eval → Environment**; saving redeploys the service.
 - **Logs:** **eval → Logs**. Website lines come from `gunicorn`, audit lines from `celery`.

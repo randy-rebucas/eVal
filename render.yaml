@@ -14,9 +14,9 @@ services:
     # region: oregon            # oregon (default), ohio, virginia, frankfurt, singapore; fixed after creation
     healthCheckPath: /login
     preDeployCommand: flask db upgrade
-    # On deploy/restart the worker finishes running audits before exiting (Celery warm shutdown). Give it the
-    # longest grace period Render allows; audits still running after that are marked failed and can be re-run.
-    maxShutdownDelaySeconds: 300
+    # On deploy/restart the worker finishes running audits before exiting (Celery warm shutdown). Render does not
+    # allow maxShutdownDelaySeconds on a service with a disk, so the default 30 s grace period applies; audits
+    # still running after that are marked failed and can be re-run.
     # The disk keeps ZIP uploads and the Trivy database. Render does not allow scaling a service that has a
     # disk, and deploys with a disk have a short downtime.
     disk:
