@@ -2,38 +2,47 @@
 {% from "_macros.html" import risk_badge, status_badge %}
 {% block title %}{{ project.name }}{% endblock %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-start mb-3">
-  <div>
-    <h1 class="h3 mb-0">{{ project.name }}</h1>
-    {% if project.description %}<p class="text-muted mb-0">{{ project.description }}</p>{% endif %}
-  </div>
-  <div class="d-flex gap-2">
-    {% if g.membership.role != 'viewer' %}
-    <a class="btn btn-primary btn-sm" href="{{ url_for('repos.new', org_slug=g.org.slug, project_id=project.id) }}"><i class="bi bi-plus-lg"></i> Add repository</a>
-    {% endif %}
-    {% if g.membership.role in ['admin', 'owner'] %}
-    <form method="post" action="{{ url_for('projects.delete', org_slug=g.org.slug, project_id=project.id) }}">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button class="btn btn-sm btn-outline-danger" data-confirm="Delete this project and all its audits?">Delete project</button>
-    </form>
-    {% endif %}
-  </div>
+<div class="page">
+  <header class="page-head">
+    <div>
+      <p class="trail"><a href="{{ url_for('projects.index', org_slug=g.org.slug) }}">projects</a><span class="sep">/</span>{{ project.name }}</p>
+      <h1 class="page-title"><i class="bi bi-folder2-open" aria-hidden="true"></i> {{ project.name }}</h1>
+      {% if project.description %}<p class="page-lede">{{ project.description }}</p>{% endif %}
+    </div>
+    <div class="page-acts">
+      {% if g.membership.role != 'viewer' %}
+      <a class="btn-ink" href="{{ url_for('repos.new', org_slug=g.org.slug, project_id=project.id) }}"><i class="bi bi-plus-lg" aria-hidden="true"></i> Add repository</a>
+      {% endif %}
+      {% if g.membership.role in ['admin', 'owner'] %}
+      <form method="post" action="{{ url_for('projects.delete', org_slug=g.org.slug, project_id=project.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="act act-danger" data-confirm="Delete this project and all its audits?" data-confirm-ok="Delete project"><i class="bi bi-trash3" aria-hidden="true"></i> Delete project</button>
+      </form>
+      {% endif %}
+    </div>
+  </header>
+
+  <section class="pane" aria-labelledby="repos-h">
+    <div class="pane-bar"><h2 id="repos-h">Repositories</h2><span class="pane-aside">{{ project.repositories|length }} total</span></div>
+    <div class="register-wrap">
+    <table class="register">
+      <thead><tr><th>Repository</th><th>Source</th><th>Last audit</th><th>Score</th><th>Risk</th></tr></thead>
+      <tbody>
+      {% for r in project.repositories %}
+        {% set last = r.audits[0] if r.audits else None %}
+        <tr>
+          <td class="reg-repo" data-label="Repository"><a href="{{ url_for('repos.detail', org_slug=g.org.slug, repo_id=r.id) }}">{{ r.name }}</a></td>
+          <td data-label="Source"><i class="bi {{ 'bi-github' if r.source == 'github' else 'bi-file-zip' }}" aria-hidden="true"></i> {{ r.source }}</td>
+          <td data-label="Last audit">{% if last %}{{ status_badge(last.status) }} <span class="reg-sub d-block">{{ last.created_at|dt }}</span>{% else %}<span class="reg-quiet">never</span>{% endif %}</td>
+          <td class="fig" data-label="Score">{{ last.overall_score|score if last else '—' }}</td>
+          <td data-label="Risk">{{ risk_badge(last.risk_level) if last else '' }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="empty">No repositories yet. Connect a GitHub repository or upload a ZIP archive.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </section>
 </div>
-<table class="table align-middle">
-  <thead><tr><th>Repository</th><th>Source</th><th>Last audit</th><th>Score</th><th>Risk</th></tr></thead>
-  <tbody>
-  {% for r in project.repositories %}
-    {% set last = r.audits[0] if r.audits else None %}
-    <tr>
-      <td><a href="{{ url_for('repos.detail', org_slug=g.org.slug, repo_id=r.id) }}">{{ r.name }}</a></td>
-      <td><i class="bi {{ 'bi-github' if r.source == 'github' else 'bi-file-zip' }}"></i> {{ r.source }}</td>
-      <td>{% if last %}{{ status_badge(last.status) }} <span class="small text-muted">{{ last.created_at|dt }}</span>{% else %}<span class="text-muted">never</span>{% endif %}</td>
-      <td>{{ last.overall_score|score if last else '—' }}</td>
-      <td>{{ risk_badge(last.risk_level) if last else '' }}</td>
-    </tr>
-  {% else %}
-    <tr><td colspan="5" class="text-muted">No repositories yet. Connect a GitHub repository or upload a ZIP archive.</td></tr>
-  {% endfor %}
-  </tbody>
-</table>
 {% endblock %}

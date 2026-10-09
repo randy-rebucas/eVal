@@ -10,13 +10,26 @@
   </div>
 {% endmacro %}
 
+{# Flash notes. Pages drawn as a sheet render these inside it, pinned under the frame. #}
+{% macro flash_notes() %}
+  {% for category, message in get_flashed_messages(with_categories=true) %}
+    <div class="alert alert-{{ category if category in ['success','danger','warning','info'] else 'secondary' }} alert-dismissible fade show" role="alert">
+      {{ message }}<button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+  {% endfor %}
+{% endmacro %}
+
 {% macro severity_badge(sev) %}<span class="badge sev sev-{{ sev }}">{{ sev|upper }}</span>{% endmacro %}
 
 {% macro risk_badge(risk) %}{% if risk %}<span class="badge risk risk-{{ risk|lower }}">{{ risk }}</span>{% endif %}{% endmacro %}
 
+{# Drawing-sheet risk mark: the label is always written out, so risk never depends on colour alone. #}
+{% macro risk_mark(risk) %}{% set level = risk or 'Not assessed' %}<span class="rmark rmark-{{ level|lower|replace(' ', '-') }}">{{ level }}</span>{% endmacro %}
+
+{% macro ago(days) %}{% if days is none %}—{% elif days <= 0 %}today{% elif days == 1 %}yesterday{% else %}{{ days }} days ago{% endif %}{% endmacro %}
+
 {% macro status_badge(status) %}
-  {% set cls = {'queued':'secondary','running':'primary','succeeded':'success','failed':'danger','cancelled':'dark'}[status] %}
-  <span class="badge text-bg-{{ cls }}">{{ status }}</span>
+  <span class="st st-{{ status }}">{{ status }}</span>
 {% endmacro %}
 
 {% macro score_class(score) %}{% if score is none %}{% elif score >= 80 %}score-good{% elif score >= 60 %}score-fair{% elif score >= 40 %}score-poor{% else %}score-bad{% endif %}{% endmacro %}
@@ -29,10 +42,10 @@
   {% set pts = audits|selectattr('overall_score', 'ne', none)|list %}
   {% if pts|length >= 2 %}
     {% set step = (width - 4) / (pts|length - 1) %}
-    <svg width="{{ width }}" height="{{ height }}" viewBox="0 0 {{ width }} {{ height }}" role="img" aria-label="Overall score trend">
-      <polyline fill="none" stroke="#0d6efd" stroke-width="2" points="{% for a in pts %}{{ (2 + loop.index0 * step)|round(1) }},{{ (height - 2 - (a.overall_score / 100) * (height - 4))|round(1) }} {% endfor %}"/>
+    <svg class="spark" width="{{ width }}" height="{{ height }}" viewBox="0 0 {{ width }} {{ height }}" role="img" aria-label="Overall score trend">
+      <polyline fill="none" stroke="currentColor" stroke-width="2" points="{% for a in pts %}{{ (2 + loop.index0 * step)|round(1) }},{{ (height - 2 - (a.overall_score / 100) * (height - 4))|round(1) }} {% endfor %}"/>
       {% set last = pts[-1] %}
-      <circle cx="{{ (2 + (pts|length - 1) * step)|round(1) }}" cy="{{ (height - 2 - (last.overall_score / 100) * (height - 4))|round(1) }}" r="3" fill="#0d6efd"/>
+      <circle cx="{{ (2 + (pts|length - 1) * step)|round(1) }}" cy="{{ (height - 2 - (last.overall_score / 100) * (height - 4))|round(1) }}" r="3" fill="currentColor"/>
     </svg>
   {% else %}<span class="small text-muted">trend appears after two audits</span>{% endif %}
 {% endmacro %}

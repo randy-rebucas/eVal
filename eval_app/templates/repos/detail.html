@@ -2,101 +2,120 @@
 {% from "_macros.html" import risk_badge, status_badge %}
 {% block title %}{{ repo.name }}{% endblock %}
 {% block content %}
-<nav class="small mb-2"><a href="{{ url_for('projects.detail', org_slug=g.org.slug, project_id=repo.project_id) }}">{{ repo.project.name }}</a> /</nav>
-<div class="d-flex justify-content-between align-items-start mb-3">
-  <h1 class="h3"><i class="bi {{ 'bi-github' if repo.source == 'github' else 'bi-file-zip' }}"></i> {{ repo.name }}</h1>
-  {% if g.membership.role in ['admin', 'owner'] %}
-  <form method="post" action="{{ url_for('repos.delete', org_slug=g.org.slug, repo_id=repo.id) }}">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <button class="btn btn-sm btn-outline-danger" data-confirm="Delete this repository and all of its audits?">Delete</button>
-  </form>
-  {% endif %}
-</div>
-
-<div class="row g-4">
-  <div class="col-lg-5">
-    {% if g.membership.role != 'viewer' %}
-    <div class="card mb-3"><div class="card-body">
-      <h2 class="h5">Run an audit</h2>
-      {% if repo.source == 'github' %}
-        {% if gh_error %}<div class="alert alert-warning small">{{ gh_error }}</div>{% endif %}
-        {% if branches %}
-        <form method="get" class="mb-3">
-          <label class="form-label small">Branch</label>
-          <div class="d-flex gap-2">
-            <select name="branch" class="form-select form-select-sm">
-              {% for b in branches %}<option value="{{ b }}" {% if b == selected_branch %}selected{% endif %}>{{ b }}</option>{% endfor %}
-            </select>
-            <button class="btn btn-sm btn-outline-secondary">Show commits</button>
-          </div>
-        </form>
-        {% endif %}
-        <form method="post" action="{{ url_for('repos.run', org_slug=g.org.slug, repo_id=repo.id) }}">
-          {{ run_form.hidden_tag() }}
-          <label class="form-label small">Audit the head of <strong>{{ selected_branch }}</strong>, or pick a commit:</label>
-          <select name="ref" class="form-select form-select-sm mb-2">
-            <option value="{{ selected_branch }}">{{ selected_branch }} (latest)</option>
-            {% for c in commits %}<option value="{{ c.sha }}">{{ c.sha[:8] }} — {{ c.message }} ({{ c.author }})</option>{% endfor %}
-          </select>
-          <button class="btn btn-primary btn-sm"><i class="bi bi-play-fill"></i> Run audit</button>
-        </form>
-        <hr>
-        <form method="post" action="{{ url_for('repos.run_pr', org_slug=g.org.slug, repo_id=repo.id) }}" class="d-flex gap-2 align-items-end">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <div><label class="form-label small mb-0">Audit pull request #</label><input type="number" min="1" name="number" class="form-control form-control-sm" required></div>
-          <button class="btn btn-outline-primary btn-sm"><i class="bi bi-git"></i> Audit PR</button>
-        </form>
-        <div class="form-text">Findings in changed files are compared with the latest audit of the PR's base branch.</div>
-      {% else %}
-        {% if latest_upload %}
-        <p class="small mb-2">Latest upload: <span class="mono">{{ latest_upload.original_filename }}</span>, {{ (latest_upload.size_bytes / 1024)|round(1) }} KB, sha256 <span class="mono">{{ latest_upload.sha256[:12] }}</span></p>
-        <form method="post" action="{{ url_for('repos.run', org_slug=g.org.slug, repo_id=repo.id) }}" class="mb-3">
-          {{ run_form.hidden_tag() }}<button class="btn btn-outline-primary btn-sm">Re-audit latest upload</button>
-        </form>
-        {% endif %}
-        <form method="post" enctype="multipart/form-data" action="{{ url_for('repos.upload', org_slug=g.org.slug, repo_id=repo.id) }}">
-          {{ upload_form.hidden_tag() }}
-          {{ upload_form.archive(class="form-control form-control-sm mb-2", accept=".zip") }}
-          <button class="btn btn-primary btn-sm">Upload new version &amp; audit</button>
-        </form>
-      {% endif %}
-    </div></div>
-    {% endif %}
-    {% if repo.source == 'github' %}
-    <div class="card mb-3"><div class="card-body small">
-      <h2 class="h6">GitHub access</h2>
-      <p class="mb-2">Credential: {% if repo.credential %}<strong>{{ repo.credential.label }}</strong> (…{{ repo.credential.last4 }}){% else %}none (public access only; issue creation disabled){% endif %}</p>
-      {% if g.membership.role in ['admin', 'owner'] %}
-      <form method="post" action="{{ url_for('repos.set_credential', org_slug=g.org.slug, repo_id=repo.id) }}" class="d-flex gap-2">
+<div class="page">
+  <header class="page-head">
+    <div>
+      <p class="trail"><a href="{{ url_for('projects.index', org_slug=g.org.slug) }}">projects</a><span class="sep">/</span><a href="{{ url_for('projects.detail', org_slug=g.org.slug, project_id=repo.project_id) }}">{{ repo.project.name }}</a><span class="sep">/</span>repository</p>
+      <h1 class="page-title"><i class="bi {{ 'bi-github' if repo.source == 'github' else 'bi-file-zip' }}" aria-hidden="true"></i> {{ repo.name }}</h1>
+      <p class="page-meta"><span>source <b>{{ repo.source }}</b></span><span><b class="fig">{{ audits|length }}</b> audit{{ '' if audits|length == 1 else 's' }}</span></p>
+    </div>
+    {% if g.membership.role in ['admin', 'owner'] %}
+    <div class="page-acts">
+      <form method="post" action="{{ url_for('repos.delete', org_slug=g.org.slug, repo_id=repo.id) }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <select name="credential_id" class="form-select form-select-sm">
-          {% for value, label in credential_choices %}<option value="{{ value }}" {% if repo.credential_id and value == repo.credential_id|string %}selected{% endif %}>{{ label }}</option>{% endfor %}
-        </select>
-        <button class="btn btn-sm btn-outline-secondary">Save</button>
+        <button class="act act-danger" data-confirm="Delete this repository and all of its audits?" data-confirm-ok="Delete"><i class="bi bi-trash3" aria-hidden="true"></i> Delete</button>
       </form>
-      {% endif %}
-    </div></div>
+    </div>
     {% endif %}
-  </div>
-  <div class="col-lg-7">
-    <h2 class="h5">Audit history</h2>
-    <table class="table table-sm align-middle">
-      <thead><tr><th>Started</th><th>Ref / commit</th><th>Status</th><th>Score</th><th>Risk</th><th>Δ</th></tr></thead>
-      <tbody>
-      {% for a in audits %}
-        <tr>
-          <td><a href="{{ url_for('audits.detail', org_slug=g.org.slug, audit_id=a.id) }}">{{ a.created_at|dt }}</a></td>
-          <td class="mono small">{% if a.pr_number %}<span class="badge text-bg-info">PR #{{ a.pr_number }}</span> {% endif %}{{ a.branch or 'upload' }} {{ a.commit_sha[:8] }}</td>
-          <td>{{ status_badge(a.status) }}</td>
-          <td>{{ a.overall_score|score }}</td>
-          <td>{{ risk_badge(a.risk_level) }}</td>
-          <td class="small">{% set lc = a.stats.get('lifecycle') if a.stats else None %}{% if lc %}<span class="text-danger">+{{ lc.new + lc.recurring }}</span> <span class="text-success">−{{ lc.resolved }}</span>{% endif %}</td>
-        </tr>
-      {% else %}
-        <tr><td colspan="6" class="text-muted">No audits yet.</td></tr>
-      {% endfor %}
-      </tbody>
-    </table>
+  </header>
+
+  <div class="split split-lead">
+    <div class="stack">
+      {% if g.membership.role != 'viewer' %}
+      <section class="pane" aria-labelledby="run-h">
+        <div class="pane-bar"><h2 id="run-h"><span><i class="bi bi-play-fill" aria-hidden="true"></i> Run an audit</span></h2></div>
+        <div class="pane-body">
+        {% if repo.source == 'github' %}
+          {% if gh_error %}<div class="alert alert-warning small">{{ gh_error }}</div>{% endif %}
+          {% if branches %}
+          <form method="get" class="form-inline mb-3">
+            <div><label class="form-label" for="r-branch">Branch</label>
+              <select id="r-branch" name="branch" class="form-select form-select-sm">
+                {% for b in branches %}<option value="{{ b }}" {% if b == selected_branch %}selected{% endif %}>{{ b }}</option>{% endfor %}
+              </select></div>
+            <button class="act">Show commits</button>
+          </form>
+          {% endif %}
+          <form method="post" action="{{ url_for('repos.run', org_slug=g.org.slug, repo_id=repo.id) }}" class="form-grid">
+            {{ run_form.hidden_tag() }}
+            <div><label class="form-label" for="r-ref">Audit the head of <strong>{{ selected_branch }}</strong>, or pick a commit</label>
+              <select id="r-ref" name="ref" class="form-select form-select-sm">
+                <option value="{{ selected_branch }}">{{ selected_branch }} (latest)</option>
+                {% for c in commits %}<option value="{{ c.sha }}">{{ c.sha[:8] }} — {{ c.message }} ({{ c.author }})</option>{% endfor %}
+              </select></div>
+            <div class="form-acts"><button class="btn-ink"><i class="bi bi-play-fill" aria-hidden="true"></i> Run audit</button></div>
+          </form>
+          <p class="or-rule">or a pull request</p>
+          <form method="post" action="{{ url_for('repos.run_pr', org_slug=g.org.slug, repo_id=repo.id) }}" class="form-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div><label class="form-label" for="r-pr">Audit pull request #</label><input id="r-pr" type="number" min="1" name="number" class="form-control form-control-sm" required></div>
+            <button class="act"><i class="bi bi-git" aria-hidden="true"></i> Audit PR</button>
+          </form>
+          <p class="pane-note">Findings in changed files are compared with the latest audit of the PR's base branch.</p>
+        {% else %}
+          {% if latest_upload %}
+          <dl class="kv mb-3">
+            <dt>Latest upload</dt><dd class="mono">{{ latest_upload.original_filename }}</dd>
+            <dt>Size</dt><dd class="fig">{{ (latest_upload.size_bytes / 1024)|round(1) }} KB</dd>
+            <dt>sha256</dt><dd class="mono">{{ latest_upload.sha256[:12] }}</dd>
+          </dl>
+          <form method="post" action="{{ url_for('repos.run', org_slug=g.org.slug, repo_id=repo.id) }}">
+            {{ run_form.hidden_tag() }}<button class="act"><i class="bi bi-arrow-repeat" aria-hidden="true"></i> Re-audit latest upload</button>
+          </form>
+          <p class="or-rule">or a new version</p>
+          {% endif %}
+          <form method="post" enctype="multipart/form-data" action="{{ url_for('repos.upload', org_slug=g.org.slug, repo_id=repo.id) }}" class="form-grid">
+            {{ upload_form.hidden_tag() }}
+            <div><label class="form-label" for="{{ upload_form.archive.id }}">ZIP archive</label>{{ upload_form.archive(class="form-control form-control-sm", accept=".zip") }}</div>
+            <div class="form-acts"><button class="btn-ink"><i class="bi bi-upload" aria-hidden="true"></i> Upload new version &amp; audit</button></div>
+          </form>
+        {% endif %}
+        </div>
+      </section>
+      {% endif %}
+
+      {% if repo.source == 'github' %}
+      <section class="pane" aria-labelledby="gha-h">
+        <div class="pane-bar"><h2 id="gha-h"><span><i class="bi bi-key" aria-hidden="true"></i> GitHub access</span></h2></div>
+        <div class="pane-body">
+          <p class="mb-3">Credential: {% if repo.credential %}<strong>{{ repo.credential.label }}</strong> <span class="mono">…{{ repo.credential.last4 }}</span>{% else %}<span class="text-muted">none (public access only; issue creation disabled)</span>{% endif %}</p>
+          {% if g.membership.role in ['admin', 'owner'] %}
+          <form method="post" action="{{ url_for('repos.set_credential', org_slug=g.org.slug, repo_id=repo.id) }}" class="form-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div><label class="form-label" for="r-cred">Credential</label>
+              <select id="r-cred" name="credential_id" class="form-select form-select-sm">
+                {% for value, label in credential_choices %}<option value="{{ value }}" {% if repo.credential_id and value == repo.credential_id|string %}selected{% endif %}>{{ label }}</option>{% endfor %}
+              </select></div>
+            <button class="act">Save</button>
+          </form>
+          {% endif %}
+        </div>
+      </section>
+      {% endif %}
+    </div>
+
+    <section class="pane" aria-labelledby="hist-h">
+      <h2 class="pane-bar" id="hist-h">Audit history</h2>
+      <div class="register-wrap">
+      <table class="register register-log">
+        <thead><tr><th>Started</th><th>Ref / commit</th><th>Status</th><th>Score</th><th>Risk</th><th>Δ</th></tr></thead>
+        <tbody>
+        {% for a in audits %}
+          <tr>
+            <td class="fig"><a href="{{ url_for('audits.detail', org_slug=g.org.slug, audit_id=a.id) }}">{{ a.created_at|dt }}</a></td>
+            <td class="mono">{% if a.pr_number %}<span class="tag tag-typ">PR #{{ a.pr_number }}</span> {% endif %}{{ a.branch or 'upload' }} {{ a.commit_sha[:8] }}</td>
+            <td>{{ status_badge(a.status) }}</td>
+            <td class="fig">{{ a.overall_score|score }}</td>
+            <td>{{ risk_badge(a.risk_level) }}</td>
+            <td class="fig nowrap">{% set lc = a.stats.get('lifecycle') if a.stats else None %}{% if lc %}<span class="delta-down">+{{ lc.new + lc.recurring }}</span> <span class="delta-up">−{{ lc.resolved }}</span>{% endif %}</td>
+          </tr>
+        {% else %}
+          <tr><td colspan="6" class="empty">No audits yet.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    </section>
   </div>
 </div>
 {% endblock %}

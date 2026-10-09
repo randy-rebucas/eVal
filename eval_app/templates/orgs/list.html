@@ -2,24 +2,36 @@
 {% from "_macros.html" import field %}
 {% block title %}Organizations{% endblock %}
 {% block content %}
-<div class="row g-4">
-  <div class="col-lg-7">
-    <h1 class="h3">Your organizations</h1>
-    <div class="list-group">
-      {% for org, role in orgs %}
-        <a class="list-group-item list-group-item-action d-flex justify-content-between" href="{{ url_for('orgs.dashboard', org_slug=org.slug) }}">
-          <span>{{ org.name }}</span><span class="badge text-bg-light">{{ role }}</span>
-        </a>
-      {% else %}
-        <div class="list-group-item text-muted">You are not a member of any organization yet.</div>
-      {% endfor %}
+<div class="page">
+  <header class="page-head">
+    <div>
+      <h1 class="page-title"><i class="bi bi-buildings" aria-hidden="true"></i> Your organizations</h1>
+      <p class="page-lede">Each organization is a separate workspace with its own projects, members and credentials.</p>
     </div>
-  </div>
-  <div class="col-lg-5">
-    <div class="card"><div class="card-body">
-      <h2 class="h5">New organization</h2>
-      <form method="post" novalidate>{{ form.hidden_tag() }}{{ field(form.name) }}<button class="btn btn-primary">Create</button></form>
-    </div></div>
+  </header>
+
+  <div class="split">
+    <section class="pane" aria-labelledby="ol-h">
+      <h2 class="pane-bar" id="ol-h">Switch organization</h2>
+      <ul class="rows">
+        {% for org, role in orgs %}
+          <li><a class="row-link" href="{{ url_for('orgs.dashboard', org_slug=org.slug) }}">
+            <span class="row-ico" aria-hidden="true">{{ org.name[:1]|upper }}</span>
+            <span class="row-main"><b>{{ org.name }}</b><span>~/{{ org.slug }}</span></span>
+            <span class="tag">{{ role }}</span>
+          </a></li>
+        {% else %}
+          <li class="empty">You are not a member of any organization yet.</li>
+        {% endfor %}
+      </ul>
+    </section>
+    <section class="pane" aria-labelledby="no-h">
+      <div class="pane-bar"><h2 id="no-h"><span><i class="bi bi-plus-lg" aria-hidden="true"></i> New organization</span></h2></div>
+      <div class="pane-body">
+        <form method="post" novalidate class="form-grid">{{ form.hidden_tag() }}{{ field(form.name) }}
+          <div class="form-acts"><button class="btn-ink is-block">Create</button></div></form>
+      </div>
+    </section>
   </div>
 </div>
 {% endblock %}

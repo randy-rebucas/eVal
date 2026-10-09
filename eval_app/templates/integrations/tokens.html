@@ -1,41 +1,57 @@
 {% extends "base.html" %}
 {% block title %}API tokens{% endblock %}
 {% block content %}
-<h1 class="h3">API tokens</h1>
-<p class="text-muted">Tokens act as you within <strong>{{ g.org.name }}</strong> with your current role ({{ g.membership.role }}). Use them for CI pipelines and scripts — see <code>docs/API.md</code>.</p>
-{% if new_token %}
-<div class="alert alert-warning">
-  <strong>Copy this token now — it will not be shown again.</strong>
-  <pre class="evidence mb-0 mt-2 user-select-all">{{ new_token }}</pre>
-</div>
-{% endif %}
-<div class="row g-4">
-  <div class="col-lg-8">
-    <table class="table align-middle">
-      <thead><tr><th>Name</th><th>Prefix</th><th>Created</th><th>Last used</th><th></th></tr></thead>
-      <tbody>
-      {% for t in tokens %}
-        <tr class="{{ 'text-muted' if t.revoked_at }}">
-          <td>{{ t.name }}</td><td class="mono">{{ t.prefix }}…</td><td class="small">{{ t.created_at|dt }}</td><td class="small">{{ t.last_used_at|dt }}</td>
-          <td>{% if t.revoked_at %}revoked{% else %}
-            <form method="post" action="{{ url_for('integrations.revoke', org_slug=g.org.slug, token_id=t.id) }}">
-              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-              <button class="btn btn-sm btn-outline-danger" data-confirm="Revoke this token? Pipelines using it will stop working.">Revoke</button>
-            </form>{% endif %}</td>
-        </tr>
-      {% else %}<tr><td colspan="5" class="text-muted">No tokens.</td></tr>{% endfor %}
-      </tbody>
-    </table>
+<div class="page">
+  <header class="page-head">
+    <div>
+      <p class="trail">settings<span class="sep">/</span>api tokens</p>
+      <h1 class="page-title"><i class="bi bi-key" aria-hidden="true"></i> API tokens</h1>
+      <p class="page-lede">Tokens act as you within <strong>{{ g.org.name }}</strong> with your current role ({{ g.membership.role }}). Use them for CI pipelines and scripts — see <code>docs/API.md</code>.</p>
+    </div>
+  </header>
+
+  {% if new_token %}
+  <div class="reveal" role="status">
+    <p>Copy this token now — it will not be shown again.</p>
+    <div class="lp-install mt-0">
+      <code class="user-select-all">{{ new_token }}</code>
+      <button type="button" class="copy-btn" data-copy="{{ new_token }}" hidden><i class="bi bi-clipboard" aria-hidden="true"></i><span>copy</span></button>
+    </div>
   </div>
-  <div class="col-lg-4">
-    <div class="card"><div class="card-body">
-      <h2 class="h5">New token</h2>
-      <form method="post" autocomplete="off">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <label class="form-label">Name</label><input name="name" class="form-control mb-3" maxlength="120" placeholder="e.g. GitHub Actions" required>
-        <button class="btn btn-primary">Create token</button>
-      </form>
-    </div></div>
+  {% endif %}
+
+  <div class="split">
+    <section class="pane" aria-labelledby="tk-h">
+      <div class="pane-bar"><h2 id="tk-h">Your tokens</h2><span class="pane-aside">{{ tokens|length }} total</span></div>
+      <div class="register-wrap">
+      <table class="register">
+        <thead><tr><th>Name</th><th>Prefix</th><th>Created</th><th>Last used</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
+        <tbody>
+        {% for t in tokens %}
+          <tr class="{{ 'reg-quiet' if t.revoked_at }}">
+            <td class="reg-repo" data-label="Name"><b>{{ t.name }}</b></td><td class="mono" data-label="Prefix">{{ t.prefix }}…</td><td class="fig" data-label="Created">{{ t.created_at|dt }}</td><td class="fig" data-label="Last used">{{ t.last_used_at|dt }}</td>
+            <td class="reg-act">{% if t.revoked_at %}<span class="st st-cancelled">revoked</span>{% else %}
+              <form method="post" action="{{ url_for('integrations.revoke', org_slug=g.org.slug, token_id=t.id) }}">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button class="act act-danger" data-confirm="Revoke this token? Pipelines using it will stop working." data-confirm-ok="Revoke">Revoke</button>
+              </form>{% endif %}</td>
+          </tr>
+        {% else %}<tr><td colspan="5" class="empty">No tokens.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+      </div>
+    </section>
+    <section class="pane" aria-labelledby="nt-h">
+      <div class="pane-bar"><h2 id="nt-h"><span><i class="bi bi-plus-lg" aria-hidden="true"></i> New token</span></h2></div>
+      <div class="pane-body">
+        <form method="post" autocomplete="off" class="form-grid">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div><label class="form-label" for="tk-name">Name</label><input id="tk-name" name="name" class="form-control" maxlength="120" placeholder="e.g. GitHub Actions" required></div>
+          <div class="form-acts"><button class="btn-ink is-block">Create token</button></div>
+        </form>
+        <p class="pane-note">Pass it as <code>Authorization: Bearer &lt;token&gt;</code>. Revoke it when a pipeline is retired.</p>
+      </div>
+    </section>
   </div>
 </div>
 {% endblock %}

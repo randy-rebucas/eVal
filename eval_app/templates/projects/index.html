@@ -2,28 +2,41 @@
 {% from "_macros.html" import field %}
 {% block title %}Projects{% endblock %}
 {% block content %}
-<div class="row g-4">
-  <div class="col-lg-8">
-    <h1 class="h3">Projects</h1>
-    <div class="list-group">
-      {% for p in projects %}
-        <a class="list-group-item list-group-item-action" href="{{ url_for('projects.detail', org_slug=g.org.slug, project_id=p.id) }}">
-          <div class="fw-semibold">{{ p.name }}</div>
-          {% if p.description %}<div class="small text-muted text-truncate">{{ p.description }}</div>{% endif %}
-          <div class="small text-muted">{{ p.repositories|length }} repositor{{ 'y' if p.repositories|length == 1 else 'ies' }}</div>
-        </a>
-      {% else %}
-        <div class="list-group-item text-muted">No projects yet. Create one to connect a repository.</div>
-      {% endfor %}
+<div class="page">
+  <header class="page-head">
+    <div>
+      <h1 class="page-title"><i class="bi bi-folder2" aria-hidden="true"></i> Projects</h1>
+      <p class="page-lede">Group repositories by product or team. Each repository keeps its own audit history.</p>
     </div>
+    <p class="page-meta m-0"><span><b class="fig">{{ projects|length }}</b> project{{ '' if projects|length == 1 else 's' }}</span></p>
+  </header>
+
+  <div class="split">
+    <section class="pane" aria-labelledby="pl-h">
+      <h2 class="pane-bar" id="pl-h">All projects</h2>
+      <ul class="rows">
+        {% for p in projects %}
+          <li><a class="row-link" href="{{ url_for('projects.detail', org_slug=g.org.slug, project_id=p.id) }}">
+            <span class="row-ico" aria-hidden="true"><i class="bi bi-folder2"></i></span>
+            <span class="row-main"><b>{{ p.name }}</b>
+              {% if p.description %}<span>{{ p.description }}</span>{% endif %}
+              <span>{{ p.repositories|length }} repositor{{ 'y' if p.repositories|length == 1 else 'ies' }}</span></span>
+            <i class="bi bi-chevron-right row-go" aria-hidden="true"></i>
+          </a></li>
+        {% else %}
+          <li class="empty">No projects yet. Create one to connect a repository.</li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% if g.membership.role != 'viewer' %}
+    <section class="pane" aria-labelledby="np-h">
+      <div class="pane-bar"><h2 id="np-h"><span><i class="bi bi-plus-lg" aria-hidden="true"></i> New project</span></h2></div>
+      <div class="pane-body">
+        <form method="post" novalidate class="form-grid">{{ form.hidden_tag() }}{{ field(form.name) }}{{ field(form.description) }}
+          <div class="form-acts"><button class="btn-ink is-block">Create project</button></div></form>
+      </div>
+    </section>
+    {% endif %}
   </div>
-  {% if g.membership.role != 'viewer' %}
-  <div class="col-lg-4">
-    <div class="card"><div class="card-body">
-      <h2 class="h5">New project</h2>
-      <form method="post" novalidate>{{ form.hidden_tag() }}{{ field(form.name) }}{{ field(form.description) }}<button class="btn btn-primary">Create project</button></form>
-    </div></div>
-  </div>
-  {% endif %}
 </div>
 {% endblock %}
