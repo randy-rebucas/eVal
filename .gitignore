@@ -11,3 +11,4 @@ htmlcov/
 var/
 build/
 dist/
+.tools/

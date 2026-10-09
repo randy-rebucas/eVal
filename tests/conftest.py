@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import pytest
 
@@ -9,6 +10,13 @@ from eval_app.extensions import db as _db
 from eval_app.security import ratelimit
 
 PASSWORD = "Correct-Horse-42"
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+@pytest.fixture(autouse=True)
+def _offline(monkeypatch):
+    """Tests never call OSV.dev; OSV tests inject a fake HTTP session explicitly."""
+    monkeypatch.setenv("EVAL_OSV_ENABLED", "0")
 
 
 @pytest.fixture

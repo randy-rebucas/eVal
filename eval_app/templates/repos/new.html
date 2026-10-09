@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% from "_macros.html" import field %}
+{% block title %}Add repository{% endblock %}
+{% block content %}
+<h1 class="h3">Add a repository to {{ project.name }}</h1>
+<p class="text-muted">eVal inspects source code statically. It never runs, builds, or installs the audited code.</p>
+<div class="row g-4">
+  <div class="col-lg-6">
+    <div class="card h-100"><div class="card-body">
+      <h2 class="h5"><i class="bi bi-github"></i> Connect GitHub</h2>
+      <form method="post" novalidate>
+        {{ gh_form.hidden_tag() }}<input type="hidden" name="kind" value="github">
+        {{ field(gh_form.full_name) }}
+        {{ field(gh_form.credential_id) }}
+        <div class="form-text mb-3">Private repositories need a token. Add one under <a href="{{ url_for('integrations.index', org_slug=g.org.slug) }}">Integrations</a>.</div>
+        <button class="btn btn-primary">Connect</button>
+      </form>
+    </div></div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card h-100"><div class="card-body">
+      <h2 class="h5"><i class="bi bi-file-zip"></i> Upload a ZIP archive</h2>
+      <form method="post" enctype="multipart/form-data" novalidate>
+        {{ up_form.hidden_tag() }}<input type="hidden" name="kind" value="upload">
+        {{ field(up_form.name) }}
+        <div class="mb-3">{{ up_form.archive.label(class="form-label") }}{{ up_form.archive(class="form-control", accept=".zip") }}</div>
+        <div class="form-text mb-3">Max {{ (config.MAX_CONTENT_LENGTH // 1048576) }} MB. Symlinks, absolute paths and path traversal entries are rejected. The audit starts immediately.</div>
+        <button class="btn btn-primary">Upload &amp; audit</button>
+      </form>
+    </div></div>
+  </div>
+</div>
+{% endblock %}

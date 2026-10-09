@@ -1,0 +1,3 @@
+flask
+flask-sqlalchemy
+requests==2.19.0

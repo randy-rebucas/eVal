@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% from "_macros.html" import risk_badge, status_badge %}
+{% block title %}Audit{% endblock %}
+{% block content %}
+{% set repo = audit.repository %}
+<nav class="small mb-2"><a href="{{ url_for('projects.detail', org_slug=g.org.slug, project_id=repo.project_id) }}">{{ repo.project.name }}</a> / <a href="{{ url_for('repos.detail', org_slug=g.org.slug, repo_id=repo.id) }}">{{ repo.name }}</a> /</nav>
+<div class="d-flex justify-content-between align-items-start">
+  <div>
+    <h1 class="h3 mb-1">Audit {{ status_badge(audit.status) }}</h1>
+    <p class="text-muted small mb-0">{{ audit.branch or 'uploaded archive' }} <span class="mono">{{ audit.commit_sha[:12] }}</span> · requested {{ audit.created_at|dt }}{% if audit.finished_at %} · finished {{ audit.finished_at|dt }}{% endif %}</p>
+  </div>
+  {% if not audit.is_finished and g.membership.role != 'viewer' %}
+  <form method="post" action="{{ url_for('audits.cancel', org_slug=g.org.slug, audit_id=audit.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn btn-sm btn-outline-secondary">Cancel</button>
+  </form>
+  {% endif %}
+</div>
+
+{% if not audit.is_finished %}
+<div class="card my-4" data-progress-url="{{ url_for('audits.status', org_slug=g.org.slug, audit_id=audit.id) }}"><div class="card-body">
+  <p class="mb-2">Stage: <strong data-stage>{{ audit.stage }}</strong></p>
+  <div class="progress" role="progressbar" aria-label="Audit progress"><div class="progress-bar progress-bar-striped progress-bar-animated" data-width="{{ audit.progress }}">{{ audit.progress }}%</div></div>
+</div></div>
+{% elif audit.status == 'failed' %}
+<div class="alert alert-danger my-4"><strong>Audit failed.</strong> {{ audit.error }}</div>
+{% elif audit.status == 'succeeded' %}
+<div class="my-4">
+  <p class="mb-1">Overall score <strong>{{ audit.overall_score|score }}</strong> {{ risk_badge(audit.risk_level) }}</p>
+  <p class="text-muted small">{{ audit.findings|length }} findings.</p>
+</div>
+{% endif %}
+{% endblock %}

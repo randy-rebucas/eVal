@@ -33,6 +33,8 @@ class BaseConfig:
     RATELIMIT_REDIS_URL = os.environ.get("REDIS_URL", "")
 
     DATA_DIR = Path(os.environ.get("EVAL_DATA_DIR", "./var")).resolve()
+    # Scratch space for checked-out/extracted sources; wiped after each audit. tmpfs in the worker container.
+    WORK_DIR = Path(os.environ["EVAL_WORK_DIR"]).resolve() if os.environ.get("EVAL_WORK_DIR") else None
     MAX_CONTENT_LENGTH = _int("EVAL_MAX_UPLOAD_MB", 50) * 1024 * 1024
 
     # Workspace limits (see eval_engine.workspace.Limits)
@@ -67,7 +69,7 @@ class DevelopmentConfig(BaseConfig):
 
 class TestingConfig(BaseConfig):
     TESTING = True
-    SECRET_KEY = "test-secret-key-not-for-production"  # noqa: S105  # nosec B105 - test-only constant
+    SECRET_KEY = "test-secret-key-not-for-production"  # noqa: S105  # nosec B105
     SQLALCHEMY_DATABASE_URI = os.environ.get("TEST_DATABASE_URL", "sqlite:///:memory:")
     SQLALCHEMY_ENGINE_OPTIONS: dict = {}
     # Deterministic test key (urlsafe base64 of 32 bytes); never used outside tests.

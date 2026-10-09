@@ -68,6 +68,7 @@ ignore = ["S101"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+norecursedirs = ["fixtures"]
 addopts = "-ra"
 markers = [
   "postgres: requires a PostgreSQL TEST_DATABASE_URL",

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% from "_macros.html" import field %}
+{% block title %}Integrations{% endblock %}
+{% block content %}
+<h1 class="h3">Integrations</h1>
+<p class="text-muted">Secrets are encrypted at rest and never displayed again after saving — only the last four characters are shown.</p>
+<div class="row g-4">
+  <div class="col-lg-7">
+    <table class="table align-middle">
+      <thead><tr><th>Label</th><th>Provider</th><th>Ends with</th><th>Added</th>{% if can_manage %}<th></th>{% endif %}</tr></thead>
+      <tbody>
+      {% for c in creds %}
+        <tr>
+          <td>{{ c.label }}</td><td>{{ c.provider }}</td><td class="mono">{{ '…' + c.last4 if c.last4 else '—' }}</td><td class="small">{{ c.created_at|dt }}</td>
+          {% if can_manage %}<td>
+            <form method="post" action="{{ url_for('integrations.delete', org_slug=g.org.slug, cred_id=c.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="btn btn-sm btn-outline-danger" data-confirm="Delete this credential? Repositories using it will lose access.">Delete</button>
+            </form>
+          </td>{% endif %}
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="text-muted">No credentials yet. Public GitHub repositories work without one.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% if ai_form %}{% include "integrations/_ai_settings.html" %}{% endif %}
+  </div>
+  {% if can_manage %}
+  <div class="col-lg-5">
+    <div class="card"><div class="card-body">
+      <h2 class="h5">Add credential</h2>
+      <form method="post" novalidate autocomplete="off">
+        {{ form.hidden_tag() }}{{ field(form.provider) }}{{ field(form.label) }}{{ field(form.secret) }}
+        <button class="btn btn-primary">Save</button>
+      </form>
+      <p class="small text-muted mt-3 mb-0">GitHub: use a fine-grained token limited to the repositories you audit, with <em>Contents: read</em> and (optionally) <em>Issues: write</em>.</p>
+    </div></div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

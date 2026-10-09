@@ -1,0 +1,74 @@
+"""Bandit: Python security linter (AST-based, never imports the audited code)."""
+
+from __future__ import annotations
+
+import json
+
+from ..findings import Category, Confidence, FindingKind, Severity
+from .base import Analyzer, AnalyzerContext, AnalyzerError, is_test_path
+from .registry import register
+
+SEV = {"HIGH": Severity.HIGH, "MEDIUM": Severity.MEDIUM, "LOW": Severity.LOW}
+CONF = {"HIGH": Confidence.HIGH, "MEDIUM": Confidence.MEDIUM, "LOW": Confidence.LOW}
+EXCLUDE = "./.venv,./venv,./node_modules,./build,./dist,./.tox"
+
+REMEDIATION = {
+    "B105": "Load the secret from the environment or a secrets manager; rotate the exposed value.",
+    "B106": "Load the secret from the environment or a secrets manager; rotate the exposed value.",
+    "B107": "Do not use secrets as default argument values; inject them from configuration.",
+    "B201": "Never enable the Flask debugger outside local development (it allows remote code execution).",
+    "B301": "Do not unpickle untrusted data; use JSON or a schema-validated format.",
+    "B324": "Use SHA-256 or better; for passwords use a password hashing function (scrypt/argon2/bcrypt).",
+    "B501": "Keep TLS certificate verification enabled.",
+    "B506": "Use yaml.safe_load().",
+    "B602": "Pass an argument list with shell=False and validate inputs.",
+    "B608": "Use parameterized queries / bound parameters instead of string-built SQL.",
+    "B113": "Always pass a timeout to outbound HTTP requests.",
+}
+
+
+@register
+class BanditAnalyzer(Analyzer):
+    name = "bandit"
+    title = "Bandit (Python security)"
+    categories = (Category.SECURITY,)
+    languages = ("python",)
+    tool = "bandit"
+
+    def run(self, ctx: AnalyzerContext):
+        result = self.run_tool(ctx, ["-r", ".", "-f", "json", "-q", "-x", EXCLUDE, "-s", "B101", "--exit-zero"],
+                               ok_codes=(0,))
+        try:
+            data = json.loads(result.stdout or "{}")
+        except json.JSONDecodeError as exc:
+            raise AnalyzerError("could not parse bandit output") from exc
+        findings = []
+        for item in data.get("results", [])[:2000]:
+            test_id = item.get("test_id", "B000")
+            path = self.relpath(ctx, item.get("filename", ""))
+            sev = SEV.get(item.get("issue_severity", "LOW"), Severity.LOW)
+            conf = CONF.get(item.get("issue_confidence", "LOW"), Confidence.LOW)
+            in_tests = is_test_path(path)
+            if in_tests and sev != Severity.LOW:
+                sev = Severity.LOW  # still reported: test code ships secrets and bad patterns too
+            cwe = item.get("issue_cwe") or {}
+            refs = [r for r in (item.get("more_info"), cwe.get("link")) if r]
+            findings.append(
+                self.finding(
+                    ctx,
+                    rule=f"bandit:{test_id}",
+                    title=f"{item.get('test_name', test_id).replace('_', ' ')}: {item.get('issue_text', '')}"[:300],
+                    category=Category.SECURITY,
+                    severity=sev,
+                    confidence=conf,
+                    kind=FindingKind.CONFIRMED if conf == Confidence.HIGH else FindingKind.POTENTIAL,
+                    description=(item.get("issue_text", "") + (f" (CWE-{cwe['id']})" if cwe.get("id") else "")
+                                 + (" Found in test code; severity reduced." if in_tests else "")),
+                    remediation=REMEDIATION.get(test_id, "Review the flagged code; see the Bandit reference."),
+                    file_path=path,
+                    line=item.get("line_number"),
+                    line_end=max(item.get("line_range") or [item.get("line_number") or 0]) or None,
+                    references=refs,
+                )
+            )
+        return findings

@@ -1,5 +1,11 @@
 // Audit progress polling. Elements with data-progress-url poll until the audit finishes, then reload.
 (function () {
+  // CSP forbids inline style attributes; bar widths are carried in data-width and applied here.
+  document.querySelectorAll("[data-width]").forEach(function (el) {
+    var w = parseFloat(el.getAttribute("data-width"));
+    if (!isNaN(w)) { el.style.width = Math.max(0, Math.min(100, w)) + "%"; }
+  });
+
   document.querySelectorAll("[data-progress-url]").forEach(function (el) {
     var url = el.getAttribute("data-progress-url");
     var bar = el.querySelector(".progress-bar");

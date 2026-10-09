@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% from "_macros.html" import risk_badge, status_badge %}
+{% block title %}{{ repo.name }}{% endblock %}
+{% block content %}
+<nav class="small mb-2"><a href="{{ url_for('projects.detail', org_slug=g.org.slug, project_id=repo.project_id) }}">{{ repo.project.name }}</a> /</nav>
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <h1 class="h3"><i class="bi {{ 'bi-github' if repo.source == 'github' else 'bi-file-zip' }}"></i> {{ repo.name }}</h1>
+  {% if g.membership.role in ['admin', 'owner'] %}
+  <form method="post" action="{{ url_for('repos.delete', org_slug=g.org.slug, repo_id=repo.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="btn btn-sm btn-outline-danger" data-confirm="Delete this repository and all of its audits?">Delete</button>
+  </form>
+  {% endif %}
+</div>
+
+<div class="row g-4">
+  <div class="col-lg-5">
+    {% if g.membership.role != 'viewer' %}
+    <div class="card mb-3"><div class="card-body">
+      <h2 class="h5">Run an audit</h2>
+      {% if repo.source == 'github' %}
+        {% if gh_error %}<div class="alert alert-warning small">{{ gh_error }}</div>{% endif %}
+        {% if branches %}
+        <form method="get" class="mb-3">
+          <label class="form-label small">Branch</label>
+          <div class="d-flex gap-2">
+            <select name="branch" class="form-select form-select-sm">
+              {% for b in branches %}<option value="{{ b }}" {% if b == selected_branch %}selected{% endif %}>{{ b }}</option>{% endfor %}
+            </select>
+            <button class="btn btn-sm btn-outline-secondary">Show commits</button>
+          </div>
+        </form>
+        {% endif %}
+        <form method="post" action="{{ url_for('repos.run', org_slug=g.org.slug, repo_id=repo.id) }}">
+          {{ run_form.hidden_tag() }}
+          <label class="form-label small">Audit the head of <strong>{{ selected_branch }}</strong>, or pick a commit:</label>
+          <select name="ref" class="form-select form-select-sm mb-2">
+            <option value="{{ selected_branch }}">{{ selected_branch }} (latest)</option>
+            {% for c in commits %}<option value="{{ c.sha }}">{{ c.sha[:8] }} — {{ c.message }} ({{ c.author }})</option>{% endfor %}
+          </select>
+          <button class="btn btn-primary btn-sm"><i class="bi bi-play-fill"></i> Run audit</button>
+        </form>
+      {% else %}
+        {% if latest_upload %}
+        <p class="small mb-2">Latest upload: <span class="mono">{{ latest_upload.original_filename }}</span>, {{ (latest_upload.size_bytes / 1024)|round(1) }} KB, sha256 <span class="mono">{{ latest_upload.sha256[:12] }}</span></p>
+        <form method="post" action="{{ url_for('repos.run', org_slug=g.org.slug, repo_id=repo.id) }}" class="mb-3">
+          {{ run_form.hidden_tag() }}<button class="btn btn-outline-primary btn-sm">Re-audit latest upload</button>
+        </form>
+        {% endif %}
+        <form method="post" enctype="multipart/form-data" action="{{ url_for('repos.upload', org_slug=g.org.slug, repo_id=repo.id) }}">
+          {{ upload_form.hidden_tag() }}
+          {{ upload_form.archive(class="form-control form-control-sm mb-2", accept=".zip") }}
+          <button class="btn btn-primary btn-sm">Upload new version &amp; audit</button>
+        </form>
+      {% endif %}
+    </div></div>
+    {% endif %}
+  </div>
+  <div class="col-lg-7">
+    <h2 class="h5">Audit history</h2>
+    <table class="table table-sm align-middle">
+      <thead><tr><th>Started</th><th>Ref / commit</th><th>Status</th><th>Score</th><th>Risk</th><th>Δ</th></tr></thead>
+      <tbody>
+      {% for a in audits %}
+        <tr>
+          <td><a href="{{ url_for('audits.detail', org_slug=g.org.slug, audit_id=a.id) }}">{{ a.created_at|dt }}</a></td>
+          <td class="mono small">{{ a.branch or 'upload' }} {{ a.commit_sha[:8] }}</td>
+          <td>{{ status_badge(a.status) }}</td>
+          <td>{{ a.overall_score|score }}</td>
+          <td>{{ risk_badge(a.risk_level) }}</td>
+          <td class="small">{% set lc = a.stats.get('lifecycle') if a.stats else None %}{% if lc %}<span class="text-danger">+{{ lc.new + lc.recurring }}</span> <span class="text-success">−{{ lc.resolved }}</span>{% endif %}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="6" class="text-muted">No audits yet.</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

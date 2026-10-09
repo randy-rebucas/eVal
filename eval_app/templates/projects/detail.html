@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import risk_badge, status_badge %}
 {% block title %}{{ project.name }}{% endblock %}
 {% block content %}
 <div class="d-flex justify-content-between align-items-start mb-3">
@@ -6,11 +7,33 @@
     <h1 class="h3 mb-0">{{ project.name }}</h1>
     {% if project.description %}<p class="text-muted mb-0">{{ project.description }}</p>{% endif %}
   </div>
-  {% if g.membership.role in ['admin', 'owner'] %}
-  <form method="post" action="{{ url_for('projects.delete', org_slug=g.org.slug, project_id=project.id) }}">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <button class="btn btn-sm btn-outline-danger" data-confirm="Delete this project and all its audits?">Delete project</button>
-  </form>
-  {% endif %}
+  <div class="d-flex gap-2">
+    {% if g.membership.role != 'viewer' %}
+    <a class="btn btn-primary btn-sm" href="{{ url_for('repos.new', org_slug=g.org.slug, project_id=project.id) }}"><i class="bi bi-plus-lg"></i> Add repository</a>
+    {% endif %}
+    {% if g.membership.role in ['admin', 'owner'] %}
+    <form method="post" action="{{ url_for('projects.delete', org_slug=g.org.slug, project_id=project.id) }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="btn btn-sm btn-outline-danger" data-confirm="Delete this project and all its audits?">Delete project</button>
+    </form>
+    {% endif %}
+  </div>
 </div>
+<table class="table align-middle">
+  <thead><tr><th>Repository</th><th>Source</th><th>Last audit</th><th>Score</th><th>Risk</th></tr></thead>
+  <tbody>
+  {% for r in project.repositories %}
+    {% set last = r.audits[0] if r.audits else None %}
+    <tr>
+      <td><a href="{{ url_for('repos.detail', org_slug=g.org.slug, repo_id=r.id) }}">{{ r.name }}</a></td>
+      <td><i class="bi {{ 'bi-github' if r.source == 'github' else 'bi-file-zip' }}"></i> {{ r.source }}</td>
+      <td>{% if last %}{{ status_badge(last.status) }} <span class="small text-muted">{{ last.created_at|dt }}</span>{% else %}<span class="text-muted">never</span>{% endif %}</td>
+      <td>{{ last.overall_score|score if last else '—' }}</td>
+      <td>{{ risk_badge(last.risk_level) if last else '' }}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="5" class="text-muted">No repositories yet. Connect a GitHub repository or upload a ZIP archive.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
 {% endblock %}
