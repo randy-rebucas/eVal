@@ -207,3 +207,20 @@ def test_findings_count_matches_detail(alice, db):
     audit = db.session.execute(db.select(Audit)).scalar_one()
     count = db.session.scalar(db.select(db.func.count(Finding.id)).where(Finding.audit_id == audit.id))
     assert count == len(audit.findings) > 5
+
+
+def test_running_audit_shows_toggleable_progress_log(alice, db):
+    c, org = alice["client"], alice["org"]
+    pid = make_project(c, org)
+    upload_new(c, org, pid, zip_bytes(FIXTURES / "cleanapp"))
+    audit = db.session.execute(db.select(Audit)).scalar_one()
+    audit.status = "running"
+    audit.stage = "analyzing: Ruff"
+    audit.progress = 25
+    db.session.commit()
+
+    page = c.get(f"/o/{org}/audits/{audit.id}")
+    assert page.status_code == 200
+    assert b"<details class=\"audit-log" in page.data
+    assert b"<summary>Running logs</summary>" in page.data
+    assert b"analyzing: Ruff" in page.data and b"25%" in page.data

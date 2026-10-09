@@ -33,6 +33,12 @@
 <div class="card my-4" data-progress-url="{{ url_for('audits.status', org_slug=g.org.slug, audit_id=audit.id) }}"><div class="card-body">
   <p class="mb-2">Stage: <strong data-stage>{{ audit.stage }}</strong></p>
   <div class="progress" role="progressbar" aria-label="Audit progress"><div class="progress-bar progress-bar-striped progress-bar-animated" data-width="{{ audit.progress }}">{{ audit.progress }}%</div></div>
+  <details class="audit-log mt-3" data-audit-log>
+    <summary>Running logs</summary>
+    <ol class="audit-log-entries small text-muted mb-0 mt-2" data-audit-log-items aria-live="polite" aria-relevant="additions">
+      <li><time>{{ audit.updated_at|dt }}</time> {{ audit.stage }} · {{ audit.progress }}%</li>
+    </ol>
+  </details>
   <p class="small text-muted mt-2 mb-0">The source is inspected statically in an isolated worker; nothing from the repository is executed.</p>
   {% if audit.status == 'queued' %}<p class="small text-warning mt-1 mb-0">Waiting for a worker. If this does not start within a few minutes, check that the Celery worker (queue <code>audits</code>) is running.</p>{% endif %}
 </div></div>

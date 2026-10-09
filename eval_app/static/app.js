@@ -10,6 +10,23 @@
     var url = el.getAttribute("data-progress-url");
     var bar = el.querySelector(".progress-bar");
     var label = el.querySelector("[data-stage]");
+    var log = el.querySelector("[data-audit-log-items]");
+    var lastStage = label ? label.textContent : "";
+    var lastProgress = bar ? parseInt(bar.textContent, 10) : -1;
+
+    function appendLog(stage, progress) {
+      if (!log) { return; }
+      var item = document.createElement("li");
+      var time = document.createElement("time");
+      time.textContent = new Date().toLocaleTimeString();
+      item.appendChild(time);
+      item.appendChild(document.createTextNode(" " + stage + " · " + progress + "%"));
+      log.appendChild(item);
+      if (el.querySelector("[data-audit-log]").open) {
+        log.scrollTop = log.scrollHeight;
+      }
+    }
+
     function tick() {
       fetch(url, { headers: { Accept: "application/json" }, credentials: "same-origin" })
         .then(function (r) { return r.ok ? r.json() : null; })
@@ -17,6 +34,11 @@
           if (!data) { return; }
           if (bar) { bar.style.width = data.progress + "%"; bar.textContent = data.progress + "%"; }
           if (label) { label.textContent = data.stage; }
+          if (data.stage !== lastStage || data.progress !== lastProgress) {
+            appendLog(data.stage, data.progress);
+            lastStage = data.stage;
+            lastProgress = data.progress;
+          }
           if (["succeeded", "failed", "cancelled"].indexOf(data.status) !== -1) {
             window.location.reload();
           } else {
