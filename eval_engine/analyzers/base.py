@@ -131,6 +131,9 @@ class Analyzer:
     categories: ClassVar[tuple[Category, ...]]
     languages: ClassVar[tuple[str, ...]] = ()  # empty = language-agnostic
     tool: ClassVar[str | None] = None  # external executable required (see sandbox.ALLOWED_TOOLS)
+    # POSIX RLIMIT_AS for the tool. None disables it for runtimes that mmap large files (the container's
+    # cgroup memory limit still bounds real usage).
+    address_space_limit: ClassVar[int | None] = 3 * 1024 * 1024 * 1024
 
     def applicable(self, ctx: AnalyzerContext) -> str | None:
         """Return None when the analyzer should run, else a human-readable reason to skip."""
@@ -190,7 +193,7 @@ class Analyzer:
 
         if self.tool is None:
             raise AnalyzerError(f"{self.name} does not declare an external tool")
-        result = sandbox.run(self.tool, args, cwd=ctx.root, timeout=ctx.timeout)
+        result = sandbox.run(self.tool, args, cwd=ctx.root, timeout=ctx.timeout, memory_bytes=self.address_space_limit)
         if result.timed_out:
             raise ToolTimeout(f"{self.tool} exceeded the {ctx.timeout}s time limit")
         if result.returncode not in ok_codes:

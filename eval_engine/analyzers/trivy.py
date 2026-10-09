@@ -28,6 +28,7 @@ class TrivyAnalyzer(Analyzer):
     title = "Trivy (dependencies, IaC, secrets)"
     categories = (Category.DEPENDENCIES, Category.DEVOPS)
     tool = "trivy"
+    address_space_limit = None  # Trivy mmaps its vulnerability DB; RLIMIT_AS makes that fail
 
     def run(self, ctx: AnalyzerContext):
         args = ["fs", "--scanners", "vuln,misconfig,secret", "--format", "json", "--quiet", "--exit-code", "0",

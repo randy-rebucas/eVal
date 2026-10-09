@@ -89,12 +89,13 @@ def _scrubbed_env(home: Path, extra: dict[str, str] | None) -> dict[str, str]:
     return env
 
 
-def _posix_limits(cpu_seconds: int, memory_bytes: int, fsize_bytes: int):  # pragma: no cover - POSIX only
+def _posix_limits(cpu_seconds: int, memory_bytes: int | None, fsize_bytes: int):  # pragma: no cover - POSIX only
     def apply():
         import resource
 
         resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds + 5))
-        resource.setrlimit(resource.RLIMIT_AS, (memory_bytes, memory_bytes))
+        if memory_bytes:  # None for tools that mmap large files (Trivy); cgroup mem_limit still applies
+            resource.setrlimit(resource.RLIMIT_AS, (memory_bytes, memory_bytes))
         resource.setrlimit(resource.RLIMIT_FSIZE, (fsize_bytes, fsize_bytes))
         resource.setrlimit(resource.RLIMIT_NOFILE, (1024, 1024))
         resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
@@ -117,7 +118,7 @@ def run(
     cwd: Path,
     timeout: int = 300,
     max_output: int = DEFAULT_MAX_OUTPUT,
-    memory_bytes: int = 3 * 1024 * 1024 * 1024,
+    memory_bytes: int | None = 3 * 1024 * 1024 * 1024,
     env_extra: dict[str, str] | None = None,
 ) -> ToolResult:
     if tool not in ALLOWED_TOOLS:

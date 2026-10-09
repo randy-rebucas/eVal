@@ -33,6 +33,7 @@ class SemgrepAnalyzer(Analyzer):
     title = "Semgrep (multi-language SAST)"
     categories = (Category.SECURITY,)
     tool = "semgrep"
+    address_space_limit = None  # semgrep-core reserves a large virtual heap; RLIMIT_AS makes it exit 2
 
     def run(self, ctx: AnalyzerContext):
         config = os.environ.get("EVAL_SEMGREP_CONFIG", "p/default")

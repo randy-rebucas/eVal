@@ -61,7 +61,7 @@ services:
               "--concurrency=2", "--max-tasks-per-child=20", "-Q", "audits"]
     # Analyzers run untrusted repository content through static tools; constrain the container.
     read_only: true
-    tmpfs: ["/tmp:size=1g", "/work:size=4g"]
+    tmpfs: ["/tmp:size=1g,mode=1777", "/work:size=4g,uid=10001,gid=10001,mode=0700"]
     security_opt: ["no-new-privileges:true"]
     cap_drop: [ALL]
     pids_limit: 512
