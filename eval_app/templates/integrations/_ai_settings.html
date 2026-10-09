@@ -1,23 +1,32 @@
-<div class="card mt-4"><div class="card-body">
-  <h2 class="h5"><i class="bi bi-stars"></i> AI-assisted analysis</h2>
-  <p class="small text-muted">Optional. When enabled, eVal sends the most important findings — titles, rule IDs and short <strong>redacted</strong> evidence snippets, never whole files — to the selected provider for explanations, remediation suggestions and an architectural summary. AI output is labelled, validated, and <strong>never changes scores</strong>. Suggested patches are never applied.</p>
-  <p class="small mb-3">Status: {% if ai and ai.enabled %}<span class="badge text-bg-success">enabled</span> {{ ai.provider }} {{ ai.model or '(default model)' }}{% else %}<span class="badge text-bg-secondary">disabled</span>{% endif %}</p>
-  {% if can_manage %}
-  <form method="post" action="{{ url_for('integrations.save_ai', org_slug=g.org.slug) }}" class="row g-2">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-    <div class="col-12 form-check ms-2"><input class="form-check-input" type="checkbox" name="enabled" id="ai-enabled" {% if ai and ai.enabled %}checked{% endif %}><label class="form-check-label" for="ai-enabled">Enable AI analysis for new audits</label></div>
-    <div class="col-md-4"><label class="form-label small">Provider</label>
-      <select name="provider" class="form-select form-select-sm">{% for p in ai_providers %}<option value="{{ p }}" {% if ai and ai.provider == p %}selected{% endif %}>{{ p }}</option>{% endfor %}</select></div>
-    <div class="col-md-4"><label class="form-label small">Model</label><input name="model" class="form-control form-control-sm" value="{{ ai.model if ai else '' }}" placeholder="blank = claude-opus-5-5 (Anthropic)"></div>
-    <div class="col-md-4"><label class="form-label small">Findings to explain (max 50)</label><input name="max_findings" type="number" min="1" max="50" class="form-control form-control-sm" value="{{ ai.max_findings if ai else 15 }}"></div>
-    <div class="col-md-6"><label class="form-label small">API key</label>
-      <select name="credential_id" class="form-select form-select-sm"><option value="">none</option>
-        {% for c in ai_creds %}<option value="{{ c.id }}" {% if ai and ai.credential_id == c.id %}selected{% endif %}>{{ c.label }} ({{ c.provider }}, …{{ c.last4 }})</option>{% endfor %}</select></div>
-    <div class="col-md-6"><label class="form-label small">Base URL (OpenAI-compatible only)</label>
-      <select name="base_url" class="form-select form-select-sm"><option value="">—</option>
-        {% for u in ai_base_urls %}<option value="{{ u }}" {% if ai and ai.base_url == u %}selected{% endif %}>{{ u }}</option>{% endfor %}</select>
-      {% if not ai_base_urls %}<div class="form-text">The operator has not allow-listed any local/compatible endpoints (EVAL_AI_ALLOWED_BASE_URLS).</div>{% endif %}</div>
-    <div class="col-12"><button class="btn btn-sm btn-primary">Save AI settings</button></div>
-  </form>
-  {% endif %}
-</div></div>
+<section class="pane is-ai" aria-labelledby="ai-h">
+  <div class="pane-bar">
+    <h2 id="ai-h"><span><i class="bi bi-stars" aria-hidden="true"></i> AI-assisted analysis</span></h2>
+    {% if ai and ai.enabled %}<span class="st st-succeeded">enabled</span>{% else %}<span class="st st-cancelled">disabled</span>{% endif %}
+  </div>
+  <div class="pane-body">
+    <p class="read-note mb-2">Optional. When enabled, eVal sends the most important findings — titles, rule IDs and short <strong>redacted</strong> evidence snippets, never whole files — to the selected provider for explanations, remediation suggestions and an architectural summary. AI output is labelled, validated, and <strong>never changes scores</strong>. Suggested patches are never applied.</p>
+    <p class="small mb-3 text-muted">Status: {% if ai and ai.enabled %}enabled · <span class="mono">{{ ai.provider }} {{ ai.model or '(default model)' }}</span>{% else %}disabled{% endif %}</p>
+    {% if can_manage %}
+    <form method="post" action="{{ url_for('integrations.save_ai', org_slug=g.org.slug) }}" class="form-grid">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="form-check"><input class="form-check-input" type="checkbox" name="enabled" id="ai-enabled" {% if ai and ai.enabled %}checked{% endif %}><label class="form-check-label" for="ai-enabled">Enable AI analysis for new audits</label></div>
+      <div class="form-row">
+        <div><label class="form-label" for="ai-provider">Provider</label>
+          <select id="ai-provider" name="provider" class="form-select form-select-sm">{% for p in ai_providers %}<option value="{{ p }}" {% if ai and ai.provider == p %}selected{% endif %}>{{ p }}</option>{% endfor %}</select></div>
+        <div><label class="form-label" for="ai-model">Model</label><input id="ai-model" name="model" class="form-control form-control-sm" value="{{ ai.model if ai else '' }}" placeholder="blank = claude-opus-5-5 (Anthropic)"></div>
+        <div><label class="form-label" for="ai-max">Findings to explain (max 50)</label><input id="ai-max" name="max_findings" type="number" min="1" max="50" class="form-control form-control-sm" value="{{ ai.max_findings if ai else 15 }}"></div>
+      </div>
+      <div class="form-row">
+        <div><label class="form-label" for="ai-key">API key</label>
+          <select id="ai-key" name="credential_id" class="form-select form-select-sm"><option value="">none</option>
+            {% for c in ai_creds %}<option value="{{ c.id }}" {% if ai and ai.credential_id == c.id %}selected{% endif %}>{{ c.label }} ({{ c.provider }}, …{{ c.last4 }})</option>{% endfor %}</select></div>
+        <div><label class="form-label" for="ai-base">Base URL (OpenAI-compatible only)</label>
+          <select id="ai-base" name="base_url" class="form-select form-select-sm"><option value="">—</option>
+            {% for u in ai_base_urls %}<option value="{{ u }}" {% if ai and ai.base_url == u %}selected{% endif %}>{{ u }}</option>{% endfor %}</select>
+          {% if not ai_base_urls %}<div class="form-text">The operator has not allow-listed any local/compatible endpoints (EVAL_AI_ALLOWED_BASE_URLS).</div>{% endif %}</div>
+      </div>
+      <div class="form-acts"><button class="btn-ink">Save AI settings</button></div>
+    </form>
+    {% endif %}
+  </div>
+</section>

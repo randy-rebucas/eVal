@@ -130,7 +130,7 @@ def test_compare_two_audits(audited, db, app):
     assert "Introduced (1)" in page and "Container runs as root" in page and "Hardcoded credential" in page
     assert c.get(f"/o/{org}/audits/{second.id}/compare?base={first.id}").status_code == 200
     dash = c.get(f"/o/{org}").data.decode()
-    assert "Repositories by risk" in dash and "vulnapp" in dash and "<polyline" in dash
+    assert "Repositories by risk" in dash and "vulnapp" in dash and "Revisions" in dash
 
 
 def test_compare_rejects_audits_from_other_repositories(alice, db):

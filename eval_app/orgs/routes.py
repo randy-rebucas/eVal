@@ -3,8 +3,11 @@ from __future__ import annotations
 from flask import Blueprint, flash, g, redirect, render_template, request, url_for
 from flask_login import current_user, login_required
 from flask_wtf import FlaskForm
+from sqlalchemy.orm import selectinload
 from wtforms import EmailField, SelectField, StringField
 from wtforms.validators import DataRequired, Length
+
+from eval_engine.findings import CATEGORY_LABELS, Category
 
 from ..auth.services import AuthError, create_organization
 from ..extensions import db
@@ -47,15 +50,34 @@ def list_orgs():
 @org_required()
 def dashboard(org_slug):
     projects = db.session.execute(scoped_select(Project).order_by(Project.name)).scalars().all()
-    recent = (
-        db.session.execute(
-            scoped_select(Audit).join(Repository).order_by(Audit.created_at.desc()).limit(10)
-        )
-        .scalars()
-        .all()
-    )
-    return render_template("orgs/dashboard.html", projects=projects, recent_audits=recent,
-                           portfolio=services.portfolio(g.org))
+    project = request.args.get("project", "")
+    project_obj = next((p for p in projects if str(p.id) == project), None)
+    recent_q = scoped_select(Audit).join(Repository).options(selectinload(Audit.repository))
+    if project_obj:
+        recent_q = recent_q.where(Repository.project_id == project_obj.id)
+    recent = db.session.execute(recent_q.order_by(Audit.created_at.desc()).limit(10)).scalars().all()
+
+    # The project is the scope: the directive, title block, notes and rail all describe it. Risk, state and
+    # pattern are drill-downs inside that scope and only narrow the register.
+    rows = [r for r in services.portfolio(g.org) if not project_obj or r.repo.project_id == project_obj.id]
+    summary = services.portfolio_summary(rows)
+    risk = request.args.get("risk", "")
+    risk = risk if risk in services.PORTFOLIO_RANK else ""
+    state = request.args.get("state", "")
+    state = state if state in services.STATES else ""
+    pattern = request.args.get("pattern", "")
+    pattern = pattern if pattern in summary["pattern_counts"] else ""
+    due_by = services.due_date()
+    shown = [r for r in rows if (not risk or r.risk == risk) and (not state or r.in_state(state, due_by))
+             and (not pattern or pattern in r.flagged)]
+    return render_template("orgs/dashboard.html", projects=projects, has_projects=bool(projects),
+                           recent_audits=recent, portfolio=shown, summary=summary,
+                           risk_filter=risk, state_filter=state, pattern_filter=pattern,
+                           project_filter=str(project_obj.id) if project_obj else "", project_obj=project_obj,
+                           stale_days=services.STALE_AFTER_DAYS, due_days=services.ACCEPTED_DUE_DAYS,
+                           category_count=len(Category),
+                           category_codes=[(services.CATEGORY_CODES[c], CATEGORY_LABELS[c]) for c in Category],
+                           due_by=due_by)
 
 
 @bp.route("/o/<org_slug>/members", methods=["GET", "POST"])

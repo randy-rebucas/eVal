@@ -1,53 +1,317 @@
 {% extends "base.html" %}
-{% from "_macros.html" import risk_badge, status_badge, severity_badge, score_bar, sparkline %}
+{% from "_macros.html" import risk_mark, ago, flash_notes %}
 {% block title %}{{ g.org.name }}{% endblock %}
+{% block footer_note %}{% endblock %}
+{% block flashes %}{% endblock %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-3">
-  <h1 class="h3 mb-0">{{ g.org.name }}</h1>
-  {% if g.membership.role != 'viewer' %}<a class="btn btn-sm btn-primary" href="{{ url_for('projects.index', org_slug=g.org.slug) }}"><i class="bi bi-plus-lg"></i> Project / repository</a>{% endif %}
-</div>
+{% set can_write = g.membership.role != 'viewer' %}
+{% set s = summary %}
+{% set levels = ['Critical', 'High', 'Moderate', 'Not assessed', 'Low'] %}
+{% set state_labels = {'failed': 'Last audit failed', 'running': 'Audit in progress', 'stale': 'Not checked in over ' ~ stale_days ~ ' days', 'partial': 'Categories not assessed', 'due': 'Accepted risk due for review'} %}
+{% macro dash() %}{{ url_for('orgs.dashboard', org_slug=g.org.slug, project=project_filter or None, **kwargs) }}{% endmacro %}
+{% macro audit_url(a) %}{{ url_for('audits.detail', org_slug=g.org.slug, audit_id=a.id, **kwargs) }}{% endmacro %}
+{% macro counts_phrase(oc, oh) %}{% if oc %}<span class="nowrap">{{ oc }} critical</span>{% endif %}{% if oc and oh %} and {% endif %}{% if oh %}<span class="nowrap">{{ oh }} high</span>{% endif %}{% endmacro %}
+{% set seen = namespace(titles=[]) %}
 
-{% if not portfolio %}
-<div class="card"><div class="card-body">
-  <h2 class="h5">Get started</h2>
-  <ol class="mb-0">
-    <li><a href="{{ url_for('projects.index', org_slug=g.org.slug) }}">Create a project</a>.</li>
-    <li>Connect a GitHub repository or upload a ZIP archive.</li>
-    <li>Run an audit and review evidence-backed findings.</li>
-  </ol>
-</div></div>
-{% else %}
-<h2 class="h5">Repositories by risk</h2>
-<div class="table-responsive">
-<table class="table align-middle">
-  <thead><tr><th>Repository</th><th>Project</th><th class="w-fit">Score</th><th>Risk</th><th>Open critical / high</th><th>Trend</th><th>Last audited</th></tr></thead>
-  <tbody>
-  {% for row in portfolio %}{% set a = row.latest %}
-    <tr>
-      <td><a href="{{ url_for('repos.detail', org_slug=g.org.slug, repo_id=row.repo.id) }}">{{ row.repo.name }}</a></td>
-      <td class="small">{{ row.repo.project.name }}</td>
-      <td>{% if a %}<a href="{{ url_for('audits.detail', org_slug=g.org.slug, audit_id=a.id) }}" class="fw-semibold">{{ a.overall_score|score }}</a>{{ score_bar(a.overall_score) }}{% else %}—{% endif %}</td>
-      <td>{{ risk_badge(a.risk_level) if a else '' }}</td>
-      <td>{% if a %}{{ severity_badge('critical') }} {{ row.open.get('critical', 0) }} &nbsp; {{ severity_badge('high') }} {{ row.open.get('high', 0) }}{% else %}<span class="text-muted small">not audited</span>{% endif %}</td>
-      <td>{{ sparkline(row.history, 120, 28) }}</td>
-      <td class="small text-muted">{{ a.finished_at|dt if a else '—' }}</td>
-    </tr>
-  {% endfor %}
-  </tbody>
-</table>
-</div>
-{% endif %}
+{# One register row. Settled rows (Low, fully assessed, nothing pending) use the same row, folded beneath. #}
+{% macro reg_row(r) %}{% set a = r.latest %}{% set t = r.attempt %}
+      <tr>
+        <td class="reg-risk">{{ risk_mark(r.risk) }}
+          {% if r.escalated %}<div class="why-escalated{{ ' is-severe' if r.risk in ('Critical', 'High') }}"><span class="xhatch" aria-hidden="true"></span>avg {{ r.average_risk }}<span class="visually-hidden">: the weighted average alone reads {{ r.average_risk }}; risk escalated by severity</span></div>{% endif %}
+        </td>
+        <td class="reg-repo">
+          <a href="{{ url_for('repos.detail', org_slug=g.org.slug, repo_id=r.repo.id) }}">{{ r.repo.name }}</a>
+          <div class="reg-sub">{{ r.repo.project.name }}{% if a %} · <span class="mono">{{ a.branch or 'upload' }}{% if a.commit_sha %} {{ a.commit_sha[:7] }}{% endif %}</span>{% endif %}</div>
+        </td>
+        <td class="reg-why" data-label="Why">
+          {% if r.reason %}
+            {% set typ = s.pattern_counts.get(r.reason.finding) if r.reason.finding else none %}
+            {% if r.reason.finding and typ and r.reason.finding in seen.titles %}
+              {# Drafting TYP.: the note is written once; later occurrences point back to it. #}
+              <a class="why-typ" href="{{ dash(pattern=r.reason.finding) }}#register-h"><span class="tag tag-typ">typ.</span>as above, ×{{ typ }}<span class="visually-hidden">: {{ r.reason.finding }} in {{ typ }} repositories</span></a>
+              <div class="reg-sub">{{ r.reason.label }} · {{ r.reason.detail }}</div>
+            {% elif r.reason.finding %}
+              {% if typ %}{% set seen.titles = seen.titles + [r.reason.finding] %}{% endif %}
+              <a class="why-finding" href="{{ audit_url(a, category=r.reason.category) }}#findings">{{ r.reason.finding }}</a>{% if typ %} <a class="tag tag-typ" href="{{ dash(pattern=r.reason.finding) }}#register-h" aria-label="Same finding in {{ typ }} repositories">typ. ×{{ typ }}</a>{% endif %}
+              <div class="reg-sub">{{ r.reason.label }} · {{ r.reason.detail }}</div>
+            {% else %}
+              <span>{{ r.reason.label }} {{ r.reason.detail }}</span>
+            {% endif %}
+          {% elif a and r.risk == 'Low' %}<span class="reg-quiet" aria-hidden="true">—</span><span class="visually-hidden">No assessed category raises risk above Low</span>
+          {% elif a %}<span class="reg-quiet">No category could be assessed</span>
+          {% else %}<span class="reg-quiet">No completed audit yet</span>{% endif %}
+        </td>
+        <td class="reg-cov{{ '' if r.coverage else ' is-blank' }}" data-label="Coverage">
+          {% if r.flat %}
+            {# Nothing above Low and nothing hatched: nine identical cells would only repeat the count. #}
+            <span class="cov-flat">all Low</span><span class="cov-n">{{ r.assessed }}/{{ category_count }}</span><span class="visually-hidden"> categories assessed</span>
+          {% elif r.coverage %}
+            <span class="cov cov-codes cov-codes-row" aria-hidden="true">{% for c in r.coverage %}<span>{{ c.code }}</span>{% endfor %}</span>
+            <span class="cov" role="img" aria-label="{{ r.assessed }} of {{ category_count }} categories assessed: {% for c in r.coverage %}{{ c.label }} {{ c.risk|lower }}{{ ', ' if not loop.last }}{% endfor %}">{% for c in r.coverage %}<span class="cov-cell cov-{{ c.risk|lower|replace(' ', '-') }}"></span>{% endfor %}</span>
+            <span class="cov-n">{{ r.assessed }}/{{ category_count }}</span>
+            {% if r.missing %}<div class="reg-sub" aria-hidden="true">not assessed: {% if r.missing|length <= 3 %}{{ r.missing|join(', ') }}{% else %}{{ r.missing|length }} hatched{% endif %}</div>{% endif %}
+          {% else %}<span class="reg-quiet">—</span>{% endif %}
+        </td>
+        <td class="reg-counts{{ '' if a else ' is-blank' }}" data-label="Open · accepted">
+          {% set oc, oh = r.open.get('critical', 0), r.open.get('high', 0) %}
+          {% set acc = r.accepted.values()|sum %}
+          {% if oc or oh %}
+            <a href="{{ audit_url(a, severity='critical' if oc else 'high') }}#findings">{% if oc %}<strong class="n-crit nowrap">{{ oc }} critical</strong>{% endif %}{% if oc and oh %} · {% endif %}{% if oh %}<span class="nowrap">{{ oh }} high</span>{% endif %}</a> open
+          {% elif a %}<span class="reg-quiet">No critical or high open</span>
+          {% else %}<span class="reg-quiet">—</span>{% endif %}
+          {% if acc %}
+            <div class="reg-sub"><a href="{{ url_for('findings.risks', org_slug=g.org.slug) }}">{{ acc }} accepted</a>{% if r.accepted_owners %} · {{ r.accepted_owners|join(', ') }}{% endif %}{% if r.accepted_review %}<span class="nowrap"> · next review <time datetime="{{ r.accepted_review.isoformat() }}">{{ r.accepted_review.isoformat() }}</time>{% if r.accepted_review <= due_by %} <span class="tag tag-alert">due</span>{% endif %}</span>{% endif %}</div>
+          {% endif %}
+        </td>
+        <td class="reg-state" data-label="Checked">
+          {% if t and t.status in ('queued', 'running') %}
+            <a class="state-run" href="{{ audit_url(t) }}" data-progress-url="{{ url_for('audits.status', org_slug=g.org.slug, audit_id=t.id) }}">{% if t.status == 'queued' %}Queued{% else %}Running · <span data-progress-pct>{{ t.progress }}%</span>{% endif %}</a>
+          {% elif t and t.status == 'failed' %}
+            <a class="state-fail" href="{{ audit_url(t) }}">Last attempt failed</a>
+          {% elif t %}
+            <a class="reg-quiet" href="{{ audit_url(t) }}">Last attempt cancelled</a>
+          {% endif %}
+          {% if a %}
+            {% set when = a.finished_at or a.created_at %}
+            <div class="{{ 'reg-sub' if t else '' }}">{% if t %}Results from {% endif %}<time datetime="{{ when.strftime('%Y-%m-%dT%H:%MZ') }}">{{ ago(r.age_days) }}</time><span class="visually-hidden"> ({{ when|dt }})</span>{% if r.stale %} <span class="tag">stale</span>{% endif %}</div>
+            {% if r.previous_risk %}<div class="reg-sub"><span class="rev-mark" aria-hidden="true"></span>was {{ r.previous_risk }} before this check</div>{% endif %}
+          {% elif not t %}<span class="reg-quiet">Never</span>{% endif %}
+        </td>
+        <td class="reg-act">
+          <div class="acts">
+            {% if a %}<a class="act" href="{{ audit_url(a) }}" aria-label="Open audit of {{ r.repo.name }}">Open</a>{% endif %}
+            {% if can_write and not (t and t.status in ('queued', 'running')) %}
+            {% set verb = 'Retry' if t and t.status == 'failed' else ('Re-audit' if a else 'Run audit') %}
+            <form method="post" action="{{ url_for('repos.run', org_slug=g.org.slug, repo_id=r.repo.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <input type="hidden" name="ref" value="{{ a.branch if a and r.repo.source == 'github' else '' }}">
+              <button class="act act-quiet" data-confirm-ok="Queue audit" data-confirm="Queue a new audit of {{ r.repo.name }}{% if a and a.branch and r.repo.source == 'github' %} ({{ a.branch }}){% endif %}?" aria-label="{{ verb }} {{ r.repo.name }}">{{ verb }}</button>
+            </form>
+            {% endif %}
+          </div>
+        </td>
+      </tr>
+{% endmacro %}
 
-{% if recent_audits %}
-<h2 class="h5 mt-4">Recent audits</h2>
-<table class="table table-sm">
-  <tbody>
-  {% for a in recent_audits %}
-    <tr><td><a href="{{ url_for('audits.detail', org_slug=g.org.slug, audit_id=a.id) }}">{{ a.created_at|dt }}</a></td><td>{{ a.repository.name }}</td>
-      <td class="mono small">{{ a.branch or 'upload' }} {{ a.commit_sha[:8] }}</td><td>{{ status_badge(a.status) }}</td><td>{{ a.overall_score|score }}</td><td>{{ risk_badge(a.risk_level) }}</td></tr>
+<div class="console">
+  <a class="visually-hidden-focusable skip-inline" href="#register-h">Skip to repositories</a>
+  {{ flash_notes() }}
+
+  {# Status line: what this view covers and what checked it. Read once, then out of the way. #}
+  <dl class="status-line" aria-label="Portfolio status">
+    <div class="sl-org"><dt>Organization</dt><dd>{{ g.org.name }}</dd></div>
+    <div class="sl-scope"><dt>Scope</dt><dd>{{ project_obj.name if project_obj else 'All projects' }} · {{ s.total }} repositor{{ 'y' if s.total == 1 else 'ies' }}{% if risk_filter or state_filter or pattern_filter %}<span class="sl-drill">showing {% if risk_filter %}{{ risk_filter }} risk{% endif %}{% if state_filter %}{{ ' · ' if risk_filter }}{{ state_labels[state_filter]|lower }}{% endif %}{% if pattern_filter %}{{ ' · ' if risk_filter or state_filter }}“{{ pattern_filter }}”{% endif %}</span>{% endif %}</dd></div>
+    <div><dt>Latest check</dt><dd class="fig">{% if s.latest_check %}<time datetime="{{ s.latest_check.strftime('%Y-%m-%d') }}">{{ s.latest_check.strftime('%Y-%m-%d') }}</time>{% else %}—{% endif %}</dd></div>
+    <div class="sl-rev"><dt>Revision</dt><dd class="fig">{% if s.revisions %}{% set rv = s.revisions[0] %}<a href="#revisions-h">{{ rv.rev }} · <time datetime="{{ rv.when.strftime('%Y-%m-%d') }}">{{ rv.when.strftime('%Y-%m-%d') }}</time></a>{% else %}—{% endif %}</dd></div>
+    <div class="sl-engine"><dt>Checked by</dt><dd>eVal {{ app_version }} · scoring rules v{{ s.scoring_version }} · static analysis only</dd></div>
+  </dl>
+
+  <div class="console-head{{ ' has-notes' if s.total }}">
+  <section class="directive" aria-labelledby="directive-h">
+    {% if s.first_pattern %}
+      {% set p = s.first_pattern %}{% set r = s.first %}{% set lead = p.open[0] if p.open else r %}
+      <h1 id="directive-h" class="directive-title">Fix <span class="directive-mark">{{ p.title }}</span> in {{ p.rows|length }} repositories</h1>
+    {% elif s.first %}
+      {% set r = s.first %}
+      <h1 id="directive-h" class="directive-title">Open <span class="directive-mark">{{ r.repo.name }}</span> first</h1>
+    {% elif s.total and s.by_risk['Not assessed'] %}
+      <h1 id="directive-h" class="directive-title">{{ s.by_risk['Not assessed'] }} {{ 'repository has' if s.by_risk['Not assessed'] == 1 else 'repositories have' }} no assessed result</h1>
+    {% elif s.total %}
+      <h1 id="directive-h" class="directive-title">No repository is above Moderate risk</h1>
+    {% elif has_projects %}
+      <h1 id="directive-h" class="directive-title">{{ 'No repositories in ' ~ project_obj.name if project_obj else 'Add a repository to start checking' }}</h1>
+    {% else %}
+      <h1 id="directive-h" class="directive-title">Nothing has been checked yet</h1>
+    {% endif %}
+
+    {% if s.first_pattern %}
+      <p class="directive-why">
+        {{ r.risk }} risk, set by {{ r.reason.label }} ({{ r.reason.detail }}).
+        {% if p.open %}Open in {% for x in p.open %}<a href="{{ url_for('repos.detail', org_slug=g.org.slug, repo_id=x.repo.id) }}">{{ x.repo.name }}</a>{{ ', ' if not loop.last }}{% endfor %}.{% endif %}
+        {% for x in p.rows if x.flagged[p.title] == 'accepted_risk' %}{% if loop.first %}Accepted in {% endif %}<a href="{{ url_for('repos.detail', org_slug=g.org.slug, repo_id=x.repo.id) }}">{{ x.repo.name }}</a>{% if x.accepted_owners %} ({{ x.accepted_owners|join(', ') }}{% if x.accepted_review %}, review <span class="nowrap">{{ x.accepted_review.isoformat() }}</span>{% endif %}){% endif %}{{ ', ' if not loop.last else '.' }}{% endfor %}
+        {% if r.escalated %}The average alone would read {{ r.average_risk }}; severity is not averaged away.{% endif %}
+      </p>
+      <div class="directive-actions">
+        <a class="btn-ink" href="{{ audit_url(lead.latest, category=r.reason.category) }}#findings">Open {{ lead.repo.name }} audit</a>
+        <a class="act" href="{{ dash(pattern=p.title) }}#register-h">Show all {{ p.rows|length }}</a>
+      </div>
+    {% elif s.first %}
+      {% set oc, oh = r.open.get('critical', 0), r.open.get('high', 0) %}
+      <p class="directive-why">
+        {{ r.risk }} risk{% if r.reason %}, set by {{ r.reason.label }}{% if r.reason.finding %}: <strong>{{ r.reason.finding }}</strong> ({{ r.reason.detail }}){% elif r.reason.detail %}, which {{ r.reason.detail }}{% endif %}{% endif %}.
+        {% if oc or oh %}{{ counts_phrase(oc, oh) }} finding{{ '' if oc + oh == 1 else 's' }} open.{% endif %}
+        {% if r.escalated %}The average alone would read {{ r.average_risk }}; severity is not averaged away.{% endif %}
+      </p>
+      <div class="directive-actions">
+        <a class="btn-ink" href="{{ audit_url(r.latest) }}">Open {{ r.repo.name }} audit</a>
+        {% if r.reason %}<a class="act" href="{{ audit_url(r.latest, category=r.reason.category) }}#findings">{{ r.reason.label }} findings</a>{% endif %}
+      </div>
+    {% elif s.total and s.by_risk['Not assessed'] %}
+      <p class="directive-why">Nothing is above Moderate risk among the repositories that were checked. Unchecked code is unknown risk, not low risk: run their audits next.</p>
+    {% elif s.total %}
+      <p class="directive-why">In their latest audits. This covers what the analyzers could assess; it is not a guarantee of production readiness.</p>
+    {% elif has_projects %}
+      <p class="directive-why">Connect a GitHub repository or upload a ZIP archive inside a project, then run its first audit.
+        {% if can_write %}<a href="{{ url_for('projects.index', org_slug=g.org.slug) }}">Choose a project</a>.{% else %}Ask a member or admin of {{ g.org.name }} to add one.{% endif %}</p>
+    {% else %}
+      <ol class="directive-steps">
+        <li>{% if can_write %}<a href="{{ url_for('projects.index', org_slug=g.org.slug) }}">Create a project</a>{% else %}A member or admin creates a project{% endif %}.</li>
+        <li>Connect a GitHub repository or upload a ZIP archive.</li>
+        <li>Run an audit and review evidence-backed findings.</li>
+      </ol>
+    {% endif %}
+  </section>
+
+  {% if s.total %}
+  {% set st = s.state_rows %}
+  <section class="pane pane-notes" aria-labelledby="notes-h">
+    <h2 class="pane-bar" id="notes-h">Also needs attention</h2>
+    <ul class="directive-notes">
+      {% if st.failed|length == 1 %}{% set x = st.failed[0] %}<li class="note-alert"><a href="{{ audit_url(x.attempt) }}">{{ x.repo.name }}: last audit failed</a>{% if x.latest %}, older results shown{% endif %}</li>
+      {% elif st.failed %}<li class="note-alert"><a href="{{ dash(state='failed') }}#register-h">{{ st.failed|length }} repositories: last audit failed</a></li>{% endif %}
+      {% if st.due|length == 1 %}{% set x = st.due[0] %}<li class="note-alert"><a href="{{ dash(state='due') }}#register-h">{{ x.repo.name }}: accepted risk due for review {{ x.accepted_review.isoformat() }}</a></li>
+      {% elif st.due %}<li class="note-alert"><a href="{{ dash(state='due') }}#register-h">{{ st.due|length }} with an accepted risk due within {{ due_days }} days</a></li>{% endif %}
+      {% if s.gaps %}<li>Not assessed in half or more repositories: {% for gap in s.gaps %}<span class="nowrap">{{ gap.label }} {{ gap.missing }}/{{ gap.of }}</span>{{ ' · ' if not loop.last }}{% endfor %}. Check the worker's analyzer coverage.</li>{% endif %}
+      {% if st.partial %}<li><a href="{{ dash(state='partial') }}#register-h">{{ st.partial|length }} with categories not assessed</a></li>{% endif %}
+      {% if st.stale %}<li><a href="{{ dash(state='stale') }}#register-h">{{ st.stale|length }} not checked in over {{ stale_days }} days</a></li>{% endif %}
+      {% if st.running %}<li><a href="{{ dash(state='running') }}#register-h">{{ st.running|length }} audit{{ '' if st.running|length == 1 else 's' }} in progress</a></li>{% endif %}
+      {% if s.accepted and not st.due %}<li><a href="{{ url_for('findings.risks', org_slug=g.org.slug) }}">{{ s.accepted }} accepted risk{{ '' if s.accepted == 1 else 's' }} on the register</a></li>{% endif %}
+      {% if not (st.failed or st.due or s.gaps or st.partial or st.stale or st.running or s.accepted) %}<li class="note-clear">Nothing failed, running, stale or due for review.</li>{% endif %}
+    </ul>
+  </section>
+  {% endif %}
+  </div>
+
+  {% if s.total %}
+  {# Settled repositories fold beneath the register, unless a filter is drilling into them or nothing else is left. #}
+  {% set split = namespace(attention=[], settled=[]) %}
+  {% for r in portfolio %}
+    {% if r.settled(due_by) %}{% set split.settled = split.settled + [r] %}{% else %}{% set split.attention = split.attention + [r] %}{% endif %}
   {% endfor %}
-  </tbody>
-</table>
-{% endif %}
-<p class="small text-muted">Scores are risk indicators from automated static analysis, not guarantees of production readiness.</p>
+  {% set folding = split.settled and split.attention and not (risk_filter or state_filter or pattern_filter) %}
+  <section class="pane pane-register" aria-labelledby="register-h">
+    <div class="pane-bar">
+      <h2 id="register-h" tabindex="-1">Repositories by risk
+        {% if risk_filter or state_filter or pattern_filter %}<span class="pane-aside">{% if risk_filter %}{{ risk_filter }} only{% endif %}{% if state_filter %}{{ ' · ' if risk_filter }}{{ state_labels[state_filter] }}{% endif %}{% if pattern_filter %}{{ ' · ' if risk_filter or state_filter }}with “{{ pattern_filter }}”{% endif %} · <a href="{{ dash() }}">clear</a></span>{% endif %}
+      </h2>
+      {% if projects|length > 1 %}
+      <form class="project-filter" method="get" action="{{ url_for('orgs.dashboard', org_slug=g.org.slug) }}">
+        <label for="project-filter">Project</label>
+        <select id="project-filter" name="project" data-autosubmit>
+          <option value="">All projects</option>
+          {% for p in projects %}<option value="{{ p.id }}" {% if project_filter == p.id|string %}selected{% endif %}>{{ p.name }}</option>{% endfor %}
+        </select>
+        <button class="act act-quiet">Apply</button>
+      </form>
+      {% endif %}
+    </div>
+
+    <nav class="rail" aria-label="Filter repositories by risk">
+      <a class="rail-all" href="{{ dash() }}" {% if not (risk_filter or state_filter or pattern_filter) %}aria-current="true"{% endif %}><span class="rail-n">{{ s.total }}</span> <span class="rail-l">All</span></a>
+      <div class="rail-steps">
+        {% for level in levels %}{% set n = s.by_risk[level] %}{% set cls = 'rail-step rail-' ~ level|lower|replace(' ', '-') %}
+          {% if n %}
+          <a class="{{ cls }}" data-grow="{{ n }}" href="{{ dash(risk=level) }}" {% if risk_filter == level %}aria-current="true"{% endif %}><span class="rail-n">{{ n }}</span> <span class="rail-l">{{ level }}</span></a>
+          {% else %}
+          <span class="{{ cls }} is-empty" data-grow="0"><span class="rail-n">0</span> <span class="rail-l">{{ level }}</span></span>
+          {% endif %}
+        {% endfor %}
+      </div>
+    </nav>
+
+    <div class="register-wrap">
+    <table class="register" aria-labelledby="register-h">
+      <thead><tr>
+        <th scope="col">Risk</th><th scope="col">Repository</th><th scope="col">Why</th>
+        <th scope="col" class="th-cov">Coverage<span class="cov cov-codes" aria-hidden="true">{% for code, label in category_codes %}<span title="{{ label }}">{{ code }}</span>{% endfor %}</span></th>
+        <th scope="col">Open · accepted</th><th scope="col">Checked</th><th scope="col"><span class="visually-hidden">Actions</span></th>
+      </tr></thead>
+      <tbody>
+      {% for r in (split.attention if folding else portfolio) %}{{ reg_row(r) }}
+      {% else %}
+        <tr><td colspan="7" class="reg-quiet reg-empty">No repositories match{% if project_obj %} in {{ project_obj.name }}{% endif %}. <a href="{{ dash() }}">Clear filters</a>{% if project_obj %} · <a href="{{ url_for('orgs.dashboard', org_slug=g.org.slug) }}">all projects</a>{% endif %}</td></tr>
+      {% endfor %}
+      </tbody>
+      {% if folding %}
+      <tbody class="reg-fold">
+        <tr><td colspan="7">
+          <button type="button" class="act act-quiet" data-fold="reg-settled" aria-controls="reg-settled" aria-expanded="true" hidden
+                  data-label-closed="Show {{ split.settled|length }} at Low" data-label-open="Hide {{ split.settled|length }} at Low">Hide {{ split.settled|length }} at Low</button>
+          <span class="reg-fold-note"><b>{{ split.settled|length }} settled at Low</b> · all {{ category_count }} categories assessed; nothing failed, running, stale or due for review.</span>
+        </td></tr>
+      </tbody>
+      <tbody class="reg-settled" id="reg-settled">
+      {% for r in split.settled %}{{ reg_row(r) }}{% endfor %}
+      </tbody>
+      {% endif %}
+    </table>
+    </div>
+    <p class="pane-foot">Coverage codes: {% for code, label in category_codes %}<span class="nowrap"><b>{{ code }}</b> {{ label }}</span>{{ ' · ' if not loop.last }}{% endfor %}</p>
+  </section>
+  {% endif %}
+
+  <div class="console-foot">
+  {% if s.total or recent_audits %}
+  <section class="pane pane-revs" aria-labelledby="revisions-h">
+    <h2 class="pane-bar" id="revisions-h">Revisions</h2>
+    {% if s.revisions %}
+    <div class="register-wrap">
+    <table class="register register-revs" aria-labelledby="revisions-h">
+      <thead><tr><th scope="col">Rev</th><th scope="col">Date</th><th scope="col">Repository</th><th scope="col">Change</th><th scope="col">Commit</th></tr></thead>
+      <tbody>
+      {% for rv in s.revisions %}
+        <tr>
+          <td><span class="rev-letter{{ ' is-worse' if rv.worse }}">{{ rv.rev }}</span></td>
+          <td class="fig"><time datetime="{{ rv.when.strftime('%Y-%m-%d') }}">{{ rv.when.strftime('%Y-%m-%d') }}</time></td>
+          <td><a href="{{ audit_url(rv.audit) }}">{{ rv.repo.name }}</a></td>
+          <td class="rev-change">{{ risk_mark(rv.was) }} <span class="rev-arrow" aria-hidden="true"></span><span class="visually-hidden"> became </span>{{ risk_mark(rv.now) }}<span class="reg-sub rev-dir">{{ 'worse' if rv.worse else 'better' }}</span></td>
+          <td class="mono">{{ rv.audit.branch or 'upload' }}{% if rv.audit.commit_sha %} {{ rv.audit.commit_sha[:7] }}{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% else %}
+    <p class="pane-p reg-quiet">No risk level has changed between consecutive audits yet.</p>
+    {% endif %}
+
+    {% if recent_audits %}
+    <details class="audit-runs">
+      <summary>All recent audit runs ({{ recent_audits|length }})</summary>
+      <div class="register-wrap">
+      <table class="register register-log">
+        <thead><tr><th scope="col">Requested</th><th scope="col">Repository</th><th scope="col">Ref</th><th scope="col">State</th><th scope="col">Risk</th></tr></thead>
+        <tbody>
+        {% for a in recent_audits %}
+          <tr>
+            <td class="fig"><time datetime="{{ a.created_at.strftime('%Y-%m-%dT%H:%MZ') }}">{{ a.created_at|dt }}</time></td>
+            <td><a href="{{ audit_url(a) }}">{{ a.repository.name }}</a></td>
+            <td class="mono">{% if a.pr_number %}PR #{{ a.pr_number }}{% else %}{{ a.branch or 'upload' }}{% endif %}{% if a.commit_sha %} {{ a.commit_sha[:7] }}{% endif %}</td>
+            <td>{% if a.status == 'failed' %}<span class="state-fail">Failed</span>{% if a.error %}<div class="reg-sub log-error">{{ a.error }}</div>{% endif %}
+              {% elif a.status in ('queued', 'running') %}<span class="state-run">{{ a.status|capitalize }}</span>
+              {% else %}<span class="reg-quiet">{{ a.status|capitalize }}</span>{% endif %}</td>
+            <td>{% if a.status == 'succeeded' %}{{ risk_mark(a.risk_level) }}{% else %}<span class="reg-quiet">—</span>{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      </div>
+    </details>
+    {% endif %}
+  </section>
+  {% endif %}
+
+  <section class="pane pane-key" aria-labelledby="key-h">
+    <h2 class="pane-bar" id="key-h">Key</h2>
+    {% if s.total %}
+    <ul class="key-list">
+      <li class="key-item"><span class="cov" aria-hidden="true"><span class="cov-cell cov-critical"></span><span class="cov-cell cov-high"></span><span class="cov-cell cov-moderate"></span><span class="cov-cell cov-low"></span></span>coverage cell per category, inked by its risk: critical, high, moderate, low</li>
+      <li class="key-item"><span class="cov-cell cov-not-assessed" aria-hidden="true"></span>hatched: not assessed</li>
+      <li class="key-item"><span class="why-escalated is-severe"><span class="xhatch" aria-hidden="true"></span></span>crossed: risk escalated above the average</li>
+    </ul>
+    {% endif %}
+    <p class="key-note">Scores are risk indicators from automated static analysis, not guarantees of production readiness.</p>
+  </section>
+  </div>
+</div>
 {% endblock %}

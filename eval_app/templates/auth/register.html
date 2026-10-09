@@ -1,18 +1,38 @@
 {% extends "base.html" %}
-{% from "_macros.html" import field %}
+{% from "_macros.html" import field, flash_notes %}
 {% block title %}Register{% endblock %}
+{% block flashes %}{% endblock %}
 {% block content %}
-<div class="row justify-content-center"><div class="col-md-6 col-lg-5">
-  <h1 class="h3 mb-3">Create your eVal account</h1>
-  <form method="post" novalidate>
-    {{ form.hidden_tag() }}
-    {{ field(form.name) }}
-    {{ field(form.email) }}
-    {{ field(form.password) }}
-    <div class="form-text mb-3 mt-n2">At least 12 characters, combining two of: lowercase, uppercase, digits, symbols.</div>
-    {{ field(form.org_name) }}
-    <button class="btn btn-primary w-100">Create account</button>
-  </form>
-  <p class="mt-3 small">Already registered? <a href="{{ url_for('auth.login') }}">Log in</a></p>
-</div></div>
+<div class="auth">
+  <div class="auth-aside">
+    <h1>Create a workspace. <span>Run your first audit in minutes.</span></h1>
+    <p>Your account comes with an organization. Add a project, connect a GitHub repository or upload a ZIP, and eVal reads it. It never runs it.</p>
+    <div class="term auth-term" aria-hidden="true">
+      <div class="term-bar"><span class="term-dots"><i></i><i></i><i></i></span><p class="term-title">eval — <b>first run</b></p></div>
+      <div class="term-body">
+        <p class="term-line"><span class="term-prompt">01</span> create a project</p>
+        <p class="term-line"><span class="term-prompt">02</span> connect a repository <span class="term-cmt"># GitHub or ZIP</span></p>
+        <p class="term-line"><span class="term-prompt">03</span> run an audit <span class="term-cmt"># branch, commit or PR</span></p>
+        <p class="term-line"><span class="term-prompt">04</span> fix, then re-audit <span class="term-cmt"># revisions track the change</span></p>
+      </div>
+    </div>
+  </div>
+
+  <div class="auth-card">
+    <div class="term-bar"><span class="term-dots" aria-hidden="true"><i></i><i></i><i></i></span><p class="term-title">eval://<b>auth/register</b></p></div>
+    <form method="post" class="auth-form" novalidate>
+      <h2>Create your eVal account</h2>
+      <p class="auth-sub">You will be the owner of the new organization.</p>
+      {{ flash_notes() }}
+      {{ form.hidden_tag() }}
+      {{ field(form.name) }}
+      {{ field(form.email) }}
+      {{ field(form.password) }}
+      <p class="auth-hint">At least 12 characters, combining two of: lowercase, uppercase, digits, symbols.</p>
+      {{ field(form.org_name) }}
+      <button class="btn-ink auth-submit">Create account</button>
+    </form>
+    <p class="auth-alt">Already registered? <a href="{{ url_for('auth.login') }}">Log in</a></p>
+  </div>
+</div>
 {% endblock %}

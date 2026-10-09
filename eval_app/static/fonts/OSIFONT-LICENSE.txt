@@ -1,0 +1,8 @@
+osifont.woff — ISO 3098 technical lettering for CAD drawings.
+
+Source:  https://github.com/hikikomori82/osifont (file osifont-lgpl3fe.woff, downloaded 2026-10-09)
+License: GNU Lesser General Public License version 3, with the GPL font exception.
+         Embedding the font in documents or web pages does not by itself cause those documents to be
+         covered by the LGPL. See https://www.gnu.org/licenses/gpl-faq.html#FontException
+
+Used by eval_app/static/app.css for drawing-sheet lettering (labels, title block, risk marks).

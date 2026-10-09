@@ -41,7 +41,7 @@ def _safe_next(target: str | None) -> str | None:
 def index():
     if current_user.is_authenticated:
         return redirect(url_for("orgs.list_orgs"))
-    return redirect(url_for("auth.login"))
+    return render_template("landing.html")
 
 
 @bp.route("/register", methods=["GET", "POST"])

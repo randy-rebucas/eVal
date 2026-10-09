@@ -1,57 +1,109 @@
+{% from "_macros.html" import flash_notes %}
 <!doctype html>
-<html lang="en">
+<html lang="en" data-bs-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
   <title>{% block title %}eVal{% endblock %} · eVal</title>
+  <script src="{{ url_for('static', filename='theme.js') }}"></script>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
         integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css"
         integrity="sha384-XGjxtQfXaH2tnPFa9x+ruJTuLE3Aa6LhHSWRr1XeTyhezb4abCG4ccI5AkVDxqC+" crossorigin="anonymous">
+  <link rel="preload" href="{{ url_for('static', filename='fonts/ibm-plex-mono-400.woff2') }}" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="{{ url_for('static', filename='fonts/ibm-plex-mono-600.woff2') }}" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
 </head>
-<body>
-<nav class="navbar navbar-expand-md navbar-dark bg-dark mb-4">
-  <div class="container-fluid px-4">
-    <a class="navbar-brand fw-semibold" href="{{ url_for('auth.index') }}"><i class="bi bi-shield-check"></i> eVal</a>
-    {% if current_user.is_authenticated %}
-    <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#nav"><span class="navbar-toggler-icon"></span></button>
-    <div class="collapse navbar-collapse" id="nav">
-      {% if g.org %}
-      <ul class="navbar-nav me-auto">
-        <li class="nav-item"><a class="nav-link" href="{{ url_for('orgs.dashboard', org_slug=g.org.slug) }}">Dashboard</a></li>
-        <li class="nav-item"><a class="nav-link" href="{{ url_for('projects.index', org_slug=g.org.slug) }}">Projects</a></li>
-        <li class="nav-item"><a class="nav-link" href="{{ url_for('findings.risks', org_slug=g.org.slug) }}">Risk register</a></li>
-        {% block extra_nav %}{% endblock %}
-        <li class="nav-item"><a class="nav-link" href="{{ url_for('orgs.members', org_slug=g.org.slug) }}">Members</a></li>
-        <li class="nav-item"><a class="nav-link" href="{{ url_for('integrations.index', org_slug=g.org.slug) }}">Integrations</a></li>
-        <li class="nav-item"><a class="nav-link" href="{{ url_for('integrations.tokens', org_slug=g.org.slug) }}">API tokens</a></li>
-      </ul>
-      {% else %}<div class="me-auto"></div>{% endif %}
-      <span class="navbar-text me-3 small">
-        {% if g.org %}<a class="link-light" href="{{ url_for('orgs.list_orgs', all=1) }}">{{ g.org.name }}</a> · {{ g.membership.role }} · {% endif %}{{ current_user.email }}
-      </span>
-      <form method="post" action="{{ url_for('auth.logout') }}" class="d-inline">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button class="btn btn-sm btn-outline-light">Log out</button>
-      </form>
-    </div>
+{% set ep = request.endpoint or '' %}
+{% set authed = current_user.is_authenticated %}
+<body class="{{ 'is-app' if authed else 'is-guest' }}">
+<a class="skip-link" href="#main">Skip to content</a>
+
+{% macro theme_toggle() %}
+  <button type="button" class="theme-toggle" data-theme-toggle aria-label="Switch colour theme" title="Switch colour theme" hidden>
+    <i class="bi bi-moon-stars theme-dark-icon" aria-hidden="true"></i><i class="bi bi-sun theme-light-icon" aria-hidden="true"></i>
+  </button>
+{% endmacro %}
+
+{% if authed %}
+{% set section = {
+  'orgs.dashboard': 'dashboard', 'orgs.members': 'members', 'orgs.list_orgs': 'orgs',
+  'findings.risks': 'risk-register', 'findings.detail': 'findings',
+  'integrations.tokens': 'api-tokens', 'integrations.index': 'integrations',
+}.get(ep) or ep.split('.')[0] %}
+<div class="app">
+  <aside class="side" id="side" aria-label="Sidebar">
+    <a class="brand" href="{{ url_for('auth.index') }}" aria-label="eVal home"><span class="brand-prompt" aria-hidden="true">&gt;_</span>eVal</a>
+
+    {% if g.org %}
+    <a class="side-org" href="{{ url_for('orgs.list_orgs', all=1) }}" title="Switch organization">
+      <span class="side-org-k">org</span>
+      <span class="side-org-name">{{ g.org.name }}</span>
+      <span class="side-org-role">{{ g.membership.role }}</span>
+      <i class="bi bi-arrow-left-right" aria-hidden="true"></i>
+    </a>
+    <nav class="side-nav" aria-label="Main">
+      <p class="side-h">workspace</p>
+      <a href="{{ url_for('orgs.dashboard', org_slug=g.org.slug) }}" {% if ep == 'orgs.dashboard' %}aria-current="page"{% endif %}><i class="bi bi-grid-1x2" aria-hidden="true"></i>Dashboard</a>
+      <a href="{{ url_for('projects.index', org_slug=g.org.slug) }}" {% if ep.startswith('projects.') or ep.startswith('repos.') or ep.startswith('audits.') %}aria-current="page"{% endif %}><i class="bi bi-folder2" aria-hidden="true"></i>Projects</a>
+      <a href="{{ url_for('findings.risks', org_slug=g.org.slug) }}" {% if ep.startswith('findings.') %}aria-current="page"{% endif %}><i class="bi bi-shield-exclamation" aria-hidden="true"></i>Risk register</a>
+      <p class="side-h">settings</p>
+      <a href="{{ url_for('orgs.members', org_slug=g.org.slug) }}" {% if ep == 'orgs.members' %}aria-current="page"{% endif %}><i class="bi bi-people" aria-hidden="true"></i>Members</a>
+      <a href="{{ url_for('integrations.index', org_slug=g.org.slug) }}" {% if ep == 'integrations.index' %}aria-current="page"{% endif %}><i class="bi bi-plug" aria-hidden="true"></i>Integrations</a>
+      <a href="{{ url_for('integrations.tokens', org_slug=g.org.slug) }}" {% if ep == 'integrations.tokens' %}aria-current="page"{% endif %}><i class="bi bi-key" aria-hidden="true"></i>API tokens</a>
+    </nav>
+    {% else %}
+    <nav class="side-nav" aria-label="Main">
+      <p class="side-h">workspace</p>
+      <a href="{{ url_for('orgs.list_orgs', all=1) }}" {% if ep == 'orgs.list_orgs' %}aria-current="page"{% endif %}><i class="bi bi-buildings" aria-hidden="true"></i>Organizations</a>
+    </nav>
     {% endif %}
-  </div>
-</nav>
-<main class="container-fluid px-4 pb-5">
-  {% with messages = get_flashed_messages(with_categories=true) %}
-    {% for category, message in messages %}
-      <div class="alert alert-{{ category if category in ['success','danger','warning','info'] else 'secondary' }} alert-dismissible fade show" role="alert">
-        {{ message }}<button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+
+    <div class="side-foot">
+      <span class="side-email" title="{{ current_user.email }}"><i class="bi bi-person" aria-hidden="true"></i>{{ current_user.email }}</span>
+      <div class="side-acts">
+        <form method="post" action="{{ url_for('auth.logout') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <button class="side-logout"><i class="bi bi-box-arrow-right" aria-hidden="true"></i>Log out</button>
+        </form>
+        {{ theme_toggle() }}
       </div>
-    {% endfor %}
-  {% endwith %}
-  {% block content %}{% endblock %}
-</main>
-<footer class="text-center text-muted small py-3 border-top">
-  eVal {{ app_version }} — scores are risk indicators, not guarantees of production readiness.
-</footer>
+    </div>
+  </aside>
+
+  <div class="app-main">
+    <header class="topbar">
+      <button type="button" class="side-toggle" data-side-toggle aria-controls="side" aria-expanded="false" hidden><i class="bi bi-list" aria-hidden="true"></i><span>Menu</span></button>
+      <p class="crumb"><span class="crumb-prompt" aria-hidden="true">$</span> cd ~/{% if g.org %}{{ g.org.slug }}/{% endif %}<b>{{ section }}</b><span class="cursor" aria-hidden="true"></span></p>
+      <p class="topbar-meta"><span class="dot-ok" aria-hidden="true"></span>static analysis only</p>
+    </header>
+{% else %}
+<header class="guestbar">
+  <div class="guestbar-inner">
+    <a class="brand" href="{{ url_for('auth.index') }}" aria-label="eVal home"><span class="brand-prompt" aria-hidden="true">&gt;_</span>eVal</a>
+    <nav class="guest-nav" aria-label="Account">
+      <a href="{{ url_for('auth.login') }}" {% if ep == 'auth.login' %}aria-current="page"{% endif %}>Log in</a>
+      {% if config.ALLOW_REGISTRATION %}<a class="guest-cta" href="{{ url_for('auth.register') }}" {% if ep == 'auth.register' %}aria-current="page"{% endif %}>Register</a>{% endif %}
+      {{ theme_toggle() }}
+    </nav>
+  </div>
+</header>
+{% endif %}
+
+    <main id="main" class="shell-main{{ '' if authed else ' guest-main' }}" tabindex="-1">
+      {% block flashes %}{{ flash_notes() }}{% endblock %}
+      {% block content %}{% endblock %}
+    </main>
+    <footer class="shell-foot">
+      <span>eVal {{ app_version }}</span>{% block footer_note %} · Scores are risk indicators, not guarantees of production readiness.{% endblock %}
+    </footer>
+
+{% if authed %}
+  </div>
+</div>
+{% endif %}
+
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
         integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
 <script src="{{ url_for('static', filename='app.js') }}"></script>

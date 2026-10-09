@@ -1,0 +1,239 @@
+{% extends "base.html" %}
+{% from "_macros.html" import flash_notes %}
+{% block title %}Production-readiness audits for AI-generated code{% endblock %}
+{% block flashes %}{% endblock %}
+{% block content %}
+{# The sample is eval-audit's real output for tests/fixtures/vulnapp (offline: OSV.dev disabled, semgrep and trivy
+   not installed). Keep it in step with the engine when analyzers or scoring change. #}
+{% set cats = [
+  ('SE', 'Security', 'critical'), ('AR', 'Architecture', 'low'), ('TE', 'Testing', 'moderate'),
+  ('DB', 'Database', 'low'), ('AP', 'API', 'moderate'), ('DE', 'Dependencies', 'low'),
+  ('PE', 'Performance', 'low'), ('OP', 'DevOps', 'moderate'), ('MA', 'Maintainability', 'low'),
+] %}
+{% set run = [
+  ('api_security', 'API, Security', 'found', 4), ('architecture', 'Architecture', 'found', 1),
+  ('bandit', 'Security', 'found', 4), ('database', 'Database', 'found', 3),
+  ('dependencies', 'Dependencies', 'found', 1), ('devops', 'DevOps', 'found', 8),
+  ('eslint', 'no JavaScript files', 'na', 0), ('maintainability', 'Maintainability', 'found', 1),
+  ('mypy', 'Maintainability', 'clean', 0), ('osv', 'OSV.dev disabled for this offline run', 'missing', 0),
+  ('performance', 'Performance', 'found', 3), ('ruff', 'Maintainability', 'clean', 0),
+  ('secrets', 'Security', 'found', 1), ('semgrep', 'not installed on this worker', 'missing', 0),
+  ('testing', 'Testing', 'found', 1), ('trivy', 'not installed on this worker', 'missing', 0),
+  ('tsc', 'no TypeScript files', 'na', 0),
+] %}
+<div class="console lp">
+  {{ flash_notes() }}
+
+  <section class="hero" aria-labelledby="lp-h">
+    <div class="lp-pitch">
+      <p class="hero-kicker"><b>●</b> static analysis · 17 analyzers · your code is never executed</p>
+      <h1 id="lp-h" class="lp-title">AI generates code. <span class="nowrap">eVal verifies it.<span class="cursor" aria-hidden="true"></span></span></h1>
+      <p class="lp-why">Point eVal at a GitHub repository or a ZIP. It reads the code with <b>17 static analyzers</b> across <b>nine categories</b> and tells you what is risky, why, and where, with the evidence. It also tells you what it could not check.</p>
+      <div class="directive-actions lp-actions">
+        {% if config.ALLOW_REGISTRATION %}
+        <a class="btn-ink" href="{{ url_for('auth.register') }}">Register and run an audit</a>
+        <a class="act" href="{{ url_for('auth.login') }}">Log in</a>
+        {% else %}
+        <a class="btn-ink" href="{{ url_for('auth.login') }}">Log in to run an audit</a>
+        {% endif %}
+      </div>
+      <div class="lp-install">
+        <code><span class="term-prompt">$</span>eval-audit . <span class="term-flag">--format</span> sarif <span class="term-flag">--fail-on</span> high</code>
+        <button type="button" class="copy-btn" data-copy="eval-audit . --format sarif --fail-on high" hidden><i class="bi bi-clipboard" aria-hidden="true"></i><span>copy</span></button>
+      </div>
+    </div>
+
+    <div class="term lp-run" data-live-audit aria-labelledby="run-h">
+      <div class="term-bar">
+        <span class="term-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+        <h2 id="run-h" class="term-title">eval-audit — <b>vulnapp</b> · sample offline run</h2>
+        <button type="button" class="copy-btn lp-replay" data-replay hidden><i class="bi bi-arrow-repeat" aria-hidden="true"></i>replay</button>
+      </div>
+      <div class="term-body">
+        <p class="term-line lp-cmdline"><span class="term-prompt">$</span> eval-audit <span class="term-path">./vulnapp</span> <span class="term-flag">--offline</span></p>
+        <p class="lp-run-meta"><span class="state-run" data-run-state>Complete · static analysis only</span><span class="fig" data-run-count>12 ran · 2 not applicable · 3 missing</span></p>
+        <ol class="run-log" aria-label="Analyzer results">
+          {% for name, what, state, n in run %}
+          <li class="run-row is-{{ state }}" data-step>
+            <span class="run-st" aria-hidden="true"></span>
+            <span class="run-name">{{ name }}</span>
+            <span class="run-what">{{ what }}</span>
+            <span class="run-out">
+              {% if state == 'found' %}<span class="fig">{{ n }}</span> {{ 'finding' if n == 1 else 'findings' }}
+              {% elif state == 'clean' %}no findings
+              {% elif state == 'na' %}not applicable
+              {% else %}<span class="tag">Missing</span> reported{% endif %}
+            </span>
+          </li>
+          {% endfor %}
+        </ol>
+        <div class="lp-verdict" data-verdict>
+          <div class="lp-verdict-mark">
+            <span>verdict</span>
+            <span class="rmark rmark-critical">Critical</span>
+            <span class="why-escalated is-severe"><span class="xhatch" aria-hidden="true"></span><span class="fig">avg Moderate</span></span>
+          </div>
+          <p class="lp-directive">Fix the <span class="directive-mark">hardcoded AWS key in app.py</span> first</p>
+          <div class="lp-cov">
+            <div class="cov-codes" aria-hidden="true">{% for code, _, _ in cats %}<span>{{ code }}</span>{% endfor %}</div>
+            <div class="lp-cov-row">
+              <div class="cov" role="img" aria-label="Coverage: {% for code, name, lvl in cats %}{{ name }} {{ lvl }}{{ ', ' if not loop.last }}{% endfor %}">
+                {% for code, name, lvl in cats %}<span class="cov-cell cov-{{ lvl }}"></span>{% endfor %}
+              </div>
+              <span class="cov-n">9/9 assessed</span>
+            </div>
+            <p class="reg-sub">Dependencies were checked for hygiene only. With OSV.dev off and trivy missing, known CVEs were not looked up, and the report says so.</p>
+            <p class="lp-codes"><b>codes:</b> {% for code, name, _ in cats %}<span><b>{{ code }}</b> {{ name }}</span>{% endfor %}</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <dl class="status-line lp-facts">
+    <div><dt>Runs your code</dt><dd>Never</dd></div>
+    <div><dt>Analyzers</dt><dd class="fig">17</dd></div>
+    <div><dt>Categories</dt><dd class="fig">9</dd></div>
+    <div><dt>AI explanations</dt><dd>Labelled, never scored</dd></div>
+    <div><dt>Reports</dt><dd>HTML · Markdown · JSON · SARIF</dd></div>
+    <div class="sl-engine"><dt>Hosting</dt><dd>Self-hosted with Docker Compose</dd></div>
+  </dl>
+
+  <header class="lp-sec-h">
+    <h2>Evidence, not adjectives</h2>
+    <p>Every finding carries its file, line, rule and the analyzers that raised it.</p>
+  </header>
+  <section class="pane" aria-labelledby="find-h">
+    <div class="pane-bar">
+      <h2 id="find-h">Findings · vulnapp</h2>
+      <span class="pane-aside">Sample: a deliberately vulnerable test fixture, not a customer repository</span>
+    </div>
+    <div class="register-wrap">
+      <table class="register lp-findings">
+        <thead><tr><th scope="col">Severity</th><th scope="col">Finding</th><th scope="col">Kind</th><th scope="col">Evidence</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="reg-risk" data-label="Severity"><span class="rmark rmark-critical">Critical</span></td>
+            <td data-label="Finding"><span class="lp-f">Hardcoded AWS access key</span><div class="reg-sub">Security · <span class="mono">app.py:10</span> · secrets</div></td>
+            <td data-label="Kind">Confirmed</td>
+            <td data-label="Evidence"><code class="lp-ev">AWS_ACCESS_KEY_ID = "[REDACTED]"</code></td>
+          </tr>
+          <tr>
+            <td class="reg-risk" data-label="Severity"><span class="rmark rmark-high">High</span></td>
+            <td data-label="Finding"><span class="lp-f">Session signing secret hardcoded</span><div class="reg-sub">Security · <span class="mono">app.py:9</span> · api_security, bandit</div></td>
+            <td data-label="Kind">Confirmed</td>
+            <td data-label="Evidence"><code class="lp-ev">app.secret_key = "[REDACTED]"</code></td>
+          </tr>
+          <tr>
+            <td class="reg-risk" data-label="Severity"><span class="rmark rmark-high">High</span></td>
+            <td data-label="Finding"><span class="lp-f">SQL query built from a string</span><div class="reg-sub">Security · <span class="mono">app.py:16</span> · bandit, database</div></td>
+            <td data-label="Kind">Potential</td>
+            <td data-label="Evidence"><code class="lp-ev">conn.execute(f"SELECT * FROM users WHERE name = '{name}'")</code></td>
+          </tr>
+          <tr>
+            <td class="reg-risk" data-label="Severity"><span class="rmark rmark-high">High</span></td>
+            <td data-label="Finding"><span class="lp-f">State-changing endpoint with no authentication</span><div class="reg-sub">API · <span class="mono">app.py:21</span> · api_security</div></td>
+            <td data-label="Kind">Potential</td>
+            <td data-label="Evidence"><code class="lp-ev">@app.route("/orders", methods=["POST"])</code></td>
+          </tr>
+          <tr>
+            <td class="reg-risk" data-label="Severity"><span class="rmark rmark-high">High</span></td>
+            <td data-label="Finding"><span class="lp-f">Secret baked into the image</span><div class="reg-sub">DevOps · <span class="mono">Dockerfile:2</span> · devops</div></td>
+            <td data-label="Kind">Confirmed</td>
+            <td data-label="Evidence"><code class="lp-ev">ENV DATABASE_PASSWORD=[REDACTED]</code></td>
+          </tr>
+          <tr>
+            <td class="reg-risk" data-label="Severity"><span class="rmark rmark-moderate">Medium</span></td>
+            <td data-label="Finding"><span class="lp-f">Database query inside a loop</span><div class="reg-sub">Performance · <span class="mono">app.py:33</span> · performance</div></td>
+            <td data-label="Kind">Static estimate</td>
+            <td data-label="Evidence"><code class="lp-ev">orders = Order.query.filter_by(user_id=u.id).all()</code></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="pane-foot">Showing 6 of 23 findings (27 raw, deduplicated). Secrets are redacted before they are stored or shown.</p>
+  </section>
+
+  <header class="lp-sec-h">
+    <h2>Honest by mechanism</h2>
+    <p>Rules the scoring engine enforces, not promises in a slogan.</p>
+  </header>
+  <div class="lp-grid">
+    <section class="pane pane-key" aria-labelledby="rules-h">
+      <div class="pane-bar"><h2 id="rules-h">Policy · how eVal stays honest</h2></div>
+      <ul class="key-list lp-rules">
+        <li class="key-item"><span class="cov-cell cov-not-assessed" aria-hidden="true"></span><span>A category nothing could check is hatched and written <b>Not assessed</b>. It is never shown as 100.</span></li>
+        <li class="key-item"><span class="why-escalated is-severe"><span class="xhatch" aria-hidden="true"></span></span><span>One <b>Critical</b> finding sets the verdict. An average cannot hide it.</span></li>
+        <li class="key-item"><span class="tag">Missing</span><span>An analyzer that is not installed or not reachable is reported, never silently skipped.</span></li>
+        <li class="key-item"><span class="lp-rule-k">AI</span><span>AI explanations are labelled, redacted on the way in, and never change a score.</span></li>
+        <li class="key-item"><span class="lp-rule-k">Accept</span><span>Accepting a risk needs a reason, an owner and a review date. It reopens on that date.</span></li>
+        <li class="key-item"><span class="lp-rule-k">Read</span><span>Your code is read, never executed. Scoring rules are deterministic and documented.</span></li>
+      </ul>
+      <p class="key-note"><b>Note:</b> Scores are risk indicators, not guarantees of production readiness.</p>
+    </section>
+
+    <div class="term lp-cmd" role="region" aria-labelledby="cmd-h">
+      <div class="term-bar">
+        <span class="term-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+        <h2 id="cmd-h" class="term-title">Run it · <b>CI and offline</b></h2>
+      </div>
+      <div class="term-body">
+        <p class="term-line term-cmt"># Gate a pull request in CI</p>
+        <p class="term-line"><span class="term-prompt">$</span> python scripts/eval_ci.py <span class="term-flag">--repository</span> 12 <span class="term-flag">--pr</span> 418 <span class="term-flag">--fail-on</span> high <span class="term-flag">--sarif</span> <span class="term-str">eval.sarif</span></p>
+        <p class="term-line term-cmt"># Or audit a checkout offline, no server</p>
+        <p class="term-line"><span class="term-prompt">$</span> eval-audit . <span class="term-flag">--format</span> sarif <span class="term-flag">--fail-on</span> high</p>
+        <p class="term-line term-cmt"># Reports export as HTML, Markdown, JSON and SARIF.</p>
+        <p class="term-line term-cmt"># Findings can become GitHub issues.</p>
+      </div>
+    </div>
+  </div>
+
+  <header class="lp-sec-h">
+    <h2>Audit, fix, re-audit</h2>
+    <p>Each audit is a revision. Risk changes are lettered so a regression can't slip past.</p>
+  </header>
+  <section class="pane" aria-labelledby="loop-h">
+    <div class="pane-bar"><h2 id="loop-h">Revisions · vulnapp</h2><span class="pane-aside">Illustrative sample</span></div>
+    <div class="register-wrap">
+      <table class="register register-log lp-revs">
+        <thead><tr><th scope="col">Rev</th><th scope="col">Change</th><th scope="col">What happened</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><span class="rev-letter">A</span></td>
+            <td><div class="rev-change"><span class="rmark rmark-critical">Critical</span></div><div class="reg-sub">first audit</div></td>
+            <td>The run above: a hardcoded AWS key, five High findings.</td>
+          </tr>
+          <tr>
+            <td><span class="rev-letter">B</span></td>
+            <td><div class="rev-change"><span class="rmark rmark-critical">Critical</span><span class="rev-arrow" aria-hidden="true"></span><span class="rmark rmark-high">High</span></div><div class="reg-sub">better</div></td>
+            <td>Both keys moved to the environment. The injectable query and debug mode remain.</td>
+          </tr>
+          <tr>
+            <td><span class="rev-letter">C</span></td>
+            <td><div class="rev-change"><span class="rmark rmark-high">High</span><span class="rev-arrow" aria-hidden="true"></span><span class="rmark rmark-moderate">Moderate</span></div><div class="reg-sub">better</div></td>
+            <td>Query parameterised, debug off. No tests yet, so Testing still caps at Moderate.</td>
+          </tr>
+          <tr>
+            <td><span class="rev-letter is-worse">D</span></td>
+            <td><div class="rev-change"><span class="rmark rmark-moderate">Moderate</span><span class="rev-arrow" aria-hidden="true"></span><span class="rmark rmark-high">High</span></div><div class="reg-sub">worse · PR audit</div></td>
+            <td>A pull request added an unauthenticated admin route. The CI gate failed it, so it never merged.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="lp-close" aria-labelledby="close-h">
+    <p id="close-h" class="lp-close-why">Check the next thing your assistant writes before it reaches production.<span>Self-hosted. Read-only. Evidence for every finding.</span></p>
+    <div class="directive-actions">
+      {% if config.ALLOW_REGISTRATION %}
+      <a class="btn-ink" href="{{ url_for('auth.register') }}">Register and run an audit</a>
+      <a class="act" href="{{ url_for('auth.login') }}">Log in</a>
+      {% else %}
+      <a class="btn-ink" href="{{ url_for('auth.login') }}">Log in to run an audit</a>
+      {% endif %}
+    </div>
+  </section>
+</div>
+{% endblock %}
+{% block footer_note %} · The sample audit is eval-audit's output for a test fixture; the revisions are illustrative. Scores are risk indicators, not guarantees of production readiness.{% endblock %}
