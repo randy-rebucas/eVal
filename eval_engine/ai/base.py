@@ -10,6 +10,10 @@ class AIError(Exception):
     """AI call failed or returned unusable output. Message is safe to show (no secrets, no prompt text)."""
 
 
+class AIOutputError(AIError):
+    """The model answered, but not with a usable JSON object. Worth one retry: small local models often recover."""
+
+
 @dataclass(frozen=True)
 class ProviderInfo:
     name: str

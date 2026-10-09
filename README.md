@@ -18,6 +18,8 @@ indicators, and categories it could not assess are shown as *not assessed*.
 | [docs/API.md](docs/API.md) | JSON API and web routes |
 | [docs/CI.md](docs/CI.md) | GitHub Actions / CI gating, CLI |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | what is done, what is not |
+| [docs/LOCAL_AI.md](docs/LOCAL_AI.md) | eVal Local: on-device AI auditing plan |
+| [docs/NETWORK.md](docs/NETWORK.md) | what runs locally, what needs the internet, and what is sent |
 
 ## Features
 
@@ -130,6 +132,23 @@ Offline / without the server:
 eval-audit path/to/repo --format md --output report.md --fail-on high
 ```
 
+### Local AI (on-device, no cloud API)
+
+The CLI can explain findings with a model running on your own machine. No API key is needed, and findings
+plus redacted evidence never leave the device (`--ai local` accepts loopback endpoints only).
+
+```bash
+ollama pull qwen2.5-coder:7b                     # or any OpenAI-compatible local server (LM Studio, llama.cpp)
+eval-audit doctor                                # analyzers, model server, offline readiness
+eval-audit path/to/repo --ai local --offline --format html -o report.html
+eval-audit path/to/repo --ai local --ai-model llama3.1:8b --ai-url http://localhost:1234/v1
+```
+
+`--offline` skips checks that need the network (OSV.dev; Semgrep registry rules; Trivy without a pre-seeded
+cache), reports them as *not assessed*, and blocks outbound connections from eVal; the report states how many
+were blocked. If the model server is not running, the audit still completes and the report says why AI is
+missing. AI output never changes scores. See [docs/LOCAL_AI.md](docs/LOCAL_AI.md).
+
 ## Configuration
 
 All configuration is via environment variables (`.env.example` documents each). Key ones:
@@ -150,6 +169,7 @@ All configuration is via environment variables (`.env.example` documents each). 
 | `EVAL_TRIVY_CACHE_DIR` | persistent Trivy DB cache |
 | `EVAL_AI_ALLOWED_BASE_URLS` | allow-list for OpenAI-compatible endpoints (local models) |
 | `EVAL_TOOL_PATH` | extra directories searched for analyzer binaries |
+| `EVAL_LOCAL_AI_MODEL`, `EVAL_LOCAL_AI_URL` | CLI defaults for `--ai local` (`qwen2.5-coder:7b`, `http://127.0.0.1:11434/v1`) |
 
 ## Deployment notes
 

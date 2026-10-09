@@ -49,6 +49,7 @@ class PipelineConfig:
     progress: Progress | None = None
     previous_fingerprints: PreviousState | None = None
     ai: Any = None  # eval_engine.ai.enrich.Enricher
+    offline: bool = False  # skip analyzers that need network access (CLI --offline)
 
 
 @dataclass
@@ -97,6 +98,11 @@ def run_analyzer(analyzer: Analyzer, ctx: AnalyzerContext) -> AnalyzerOutcome:
     if analyzer.tool and sandbox.which(analyzer.tool) is None:
         outcome.status, outcome.reason = "skipped", f"{analyzer.tool} is not installed on the worker"
         return outcome
+    if ctx.offline:
+        needs = analyzer.network_required(ctx)
+        if needs:
+            outcome.status, outcome.reason = "skipped", f"offline mode: {needs}"
+            return outcome
     start = time.monotonic()
     try:
         outcome.findings = analyzer.run(ctx)
@@ -145,7 +151,8 @@ def run_pipeline(root: Path, config: PipelineConfig | None = None) -> AuditResul
 
     progress("detecting languages", 10, "")
     languages = detect(root, files)
-    ctx = AnalyzerContext(root=root, files=files, languages=languages, timeout=config.tool_timeout)
+    ctx = AnalyzerContext(root=root, files=files, languages=languages, timeout=config.tool_timeout,
+                          offline=config.offline)
 
     analyzers = registry.get(config.analyzers)
     outcomes: list[AnalyzerOutcome] = []

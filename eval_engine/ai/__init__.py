@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .base import AIError, AIProvider, StaticProvider
+from .base import AIError, AIOutputError, AIProvider, StaticProvider
 
 PROVIDERS = ("anthropic", "openai", "openai_compatible")
 
@@ -22,4 +22,4 @@ def build_provider(name: str, *, api_key: str, model: str = "", base_url: str = 
     raise AIError(f"Unknown AI provider {name!r}.")
 
 
-__all__ = ["PROVIDERS", "AIError", "AIProvider", "StaticProvider", "build_provider"]
+__all__ = ["PROVIDERS", "AIError", "AIOutputError", "AIProvider", "StaticProvider", "build_provider"]

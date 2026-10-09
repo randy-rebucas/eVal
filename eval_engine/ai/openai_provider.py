@@ -6,19 +6,23 @@ from __future__ import annotations
 
 import json
 
-from .base import AIError, ProviderInfo
+from .base import AIError, AIOutputError, ProviderInfo
 
 
 class OpenAIProvider:
-    def __init__(self, api_key: str, model: str, base_url: str = "", timeout: float = 120.0):
+    def __init__(self, api_key: str, model: str, base_url: str = "", timeout: float = 120.0,
+                 ignore_proxy_env: bool = False):
         import openai
 
         if not model:
             raise AIError("A model name is required for OpenAI and OpenAI-compatible providers.")
         self._openai = openai
         self._compatible = bool(base_url)
+        # ignore_proxy_env: never route requests through HTTP(S)_PROXY / ALL_PROXY (used for on-device models,
+        # whose traffic must not leave the machine).
+        http_client = openai.DefaultHttpx2Client(trust_env=False) if ignore_proxy_env else None
         self._client = openai.OpenAI(api_key=api_key or "not-needed", base_url=base_url or None, timeout=timeout,
-                                     max_retries=2)
+                                     max_retries=2, http_client=http_client)
         self.info = ProviderInfo("openai_compatible" if self._compatible else "openai", model)
 
     def complete_json(self, *, system: str, user: str, schema: dict, max_tokens: int) -> dict:
@@ -56,7 +60,7 @@ class OpenAIProvider:
         try:
             data = json.loads(choice.message.content or "")
         except json.JSONDecodeError as exc:
-            raise AIError("The model returned invalid JSON.") from exc
+            raise AIOutputError("The model returned invalid JSON.") from exc
         if not isinstance(data, dict):
-            raise AIError("The model returned a non-object JSON value.")
+            raise AIOutputError("The model returned a non-object JSON value.")
         return data
