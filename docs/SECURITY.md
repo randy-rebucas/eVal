@@ -89,6 +89,8 @@ eVal never modifies audited code. GitHub issues and PR comments are created only
   (gVisor) is recommended for hostile multi-tenant workloads.
 * The worker container needs database access to persist results. A stricter design would have the analysis
   sandbox return results to a separate persistence process.
+* Semgrep and Trivy run without `RLIMIT_AS` (their runtimes mmap/reserve large address ranges and fail under
+  it); their memory is bounded only by the worker container's cgroup limit.
 * Semgrep honours a repository's `.semgrepignore`, which a hostile repository could use to hide files.
 * Git transfer size cannot be capped before download; limits are enforced after checkout plus the GitHub-reported
   repository size check at connection time.
