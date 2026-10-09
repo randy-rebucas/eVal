@@ -48,6 +48,10 @@ class BaseConfig:
 
     GITHUB_API_URL = os.environ.get("GITHUB_API_URL", "https://api.github.com")
 
+    # Operator allow-list for OpenAI-compatible AI endpoints (e.g. http://ollama:11434/v1). Prevents SSRF.
+    AI_ALLOWED_BASE_URLS = os.environ.get("EVAL_AI_ALLOWED_BASE_URLS", "")
+    AI_TIMEOUT_SECONDS = _int("EVAL_AI_TIMEOUT_SECONDS", 120)
+
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"
     SESSION_COOKIE_SECURE = _bool("EVAL_SECURE_COOKIES", True)

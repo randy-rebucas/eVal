@@ -173,7 +173,10 @@ def run_pipeline(root: Path, config: PipelineConfig | None = None) -> AuditResul
     ai_summary: dict = {}
     if config.ai is not None:
         progress("AI-assisted analysis", 88, "")
-        ai_summary, extra = _run_ai(config.ai, findings, languages, card, ctx)
+        try:
+            ai_summary, extra = _run_ai(config.ai, findings, languages, card, ctx)
+        except Exception as exc:  # noqa: BLE001 - optional stage; the deterministic audit still stands
+            ai_summary, extra = {"error": f"AI analysis failed ({type(exc).__name__})"}, []
         fingerprint.compute(extra, source_line, family_of)
         findings.extend(extra)
 

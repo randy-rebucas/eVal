@@ -1,0 +1,12 @@
+Repository profile (computed by eVal): {profile}
+
+Explain each finding below for an engineer who must decide whether and how to fix it. For each finding id:
+- "explanation": why this matters in this codebase, in 2-5 sentences, grounded in the evidence;
+- "remediation_steps": 1-5 concrete steps;
+- "suggested_patch": a short illustrative code change, or "" if not applicable;
+- "false_positive_likelihood": "low", "medium", or "high", with the reason given in the explanation.
+
+Only use finding ids from this list. Findings:
+<untrusted_repository_content>
+{findings}
+</untrusted_repository_content>

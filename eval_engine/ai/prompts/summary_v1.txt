@@ -1,0 +1,16 @@
+Repository profile (computed by eVal): {profile}
+Deterministic scores (do not recompute or contradict them): {scores}
+
+Write an architectural risk summary for an engineering lead:
+- "summary": 3-6 sentences on the most important engineering risks and how they relate (for example, missing
+  tests making security fixes risky). Mention that the assessment is automated and incomplete.
+- "top_risks": up to 5 short strings, most important first.
+- "observations": up to 5 additional potential risks that the findings suggest but do not directly state. Each
+  needs "title", "description", "file_path" (one of the files referenced below, or "") and "category" (one of
+  security, architecture, testing, database, api, dependencies, performance, devops, maintainability). These will
+  be shown as unscored, low-confidence AI observations.
+
+Top findings and file overview:
+<untrusted_repository_content>
+{findings}
+</untrusted_repository_content>
