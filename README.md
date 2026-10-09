@@ -12,10 +12,14 @@ indicators, and categories it could not assess are shown as *not assessed*.
 
 | Doc | Contents |
 |---|---|
+| [docs/PROJECT.md](docs/PROJECT.md) | project description: eVal Local, the problem, how the AI runs on-device |
+| [docs/TECHNOLOGY.md](docs/TECHNOLOGY.md) | AI models, frameworks, libraries, tools, APIs and assets, with licenses |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | components, pipeline, data model |
 | [docs/SECURITY.md](docs/SECURITY.md) | threat model, controls, known gaps |
 | [docs/SCORING.md](docs/SCORING.md) | severity weights, ceilings, risk thresholds, lifecycle |
 | [docs/API.md](docs/API.md) | JSON API and web routes |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | installing the CLI, deploying the server, backups, upgrades, air-gapped |
+| [docs/RENDER.md](docs/RENDER.md) | step-by-step: deploy eVal on Render with the Blueprint |
 | [docs/CI.md](docs/CI.md) | GitHub Actions / CI gating, CLI |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | what is done, what is not |
 | [docs/LOCAL_AI.md](docs/LOCAL_AI.md) | eVal Local: on-device AI auditing plan |
@@ -172,6 +176,8 @@ All configuration is via environment variables (`.env.example` documents each). 
 | `EVAL_LOCAL_AI_MODEL`, `EVAL_LOCAL_AI_URL` | CLI defaults for `--ai local` (`qwen2.5-coder:7b`, `http://127.0.0.1:11434/v1`) |
 
 ## Deployment notes
+
+Full guide: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). In short:
 
 - Run behind TLS; keep `EVAL_SECURE_COOKIES=true` and set `EVAL_PROXY_FIX_HOPS` to the number of proxies. Put the worker on a separate host/node pool from the web tier
   where possible, ideally under gVisor/Kata (see docs/SECURITY.md).

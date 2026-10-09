@@ -18,9 +18,18 @@ def _int(name: str, default: int) -> int:
     return int(raw) if raw not in (None, "") else default
 
 
+def database_url(raw: str) -> str:
+    """Hosting providers (Render, Heroku) hand out ``postgres://`` / ``postgresql://`` URLs, which SQLAlchemy maps
+    to psycopg2. eVal ships psycopg 3, so select its driver explicitly; other URLs pass through unchanged."""
+    for prefix in ("postgres://", "postgresql://"):
+        if raw.startswith(prefix):
+            return "postgresql+psycopg://" + raw[len(prefix):]
+    return raw
+
+
 class BaseConfig:
     SECRET_KEY = os.environ.get("EVAL_SECRET_KEY", "")
-    SQLALCHEMY_DATABASE_URI = os.environ.get("DATABASE_URL", "")
+    SQLALCHEMY_DATABASE_URI = database_url(os.environ.get("DATABASE_URL", ""))
     SQLALCHEMY_ENGINE_OPTIONS = {"pool_pre_ping": True}
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 

@@ -1,0 +1,70 @@
+# Render Blueprint for eVal: https://render.com/docs/blueprint-spec
+# Creates: one Docker web service (web UI/API + audit worker, with a disk for uploads), PostgreSQL and Key Value.
+# Deploy: Render Dashboard -> New -> Blueprint -> select this repository. See docs/DEPLOYMENT.md#3-render.
+#
+# Plans below are paid instance types: a persistent disk is not available on free web services, and analyzers
+# need memory (the Compose worker is limited to 2 CPUs / 4 GB). Adjust to taste.
+
+services:
+  - type: web
+    name: eval
+    runtime: docker
+    dockerfilePath: ./Dockerfile.render
+    plan: 2c-4g
+    # region: oregon            # oregon (default), ohio, virginia, frankfurt, singapore; fixed after creation
+    healthCheckPath: /login
+    preDeployCommand: flask db upgrade
+    # On deploy/restart the worker finishes running audits before exiting (Celery warm shutdown). Give it the
+    # longest grace period Render allows; audits still running after that are marked failed and can be re-run.
+    maxShutdownDelaySeconds: 300
+    # The disk keeps ZIP uploads and the Trivy database. Render does not allow scaling a service that has a
+    # disk, and deploys with a disk have a short downtime.
+    disk:
+      name: eval-data
+      mountPath: /data
+      sizeGB: 10
+    envVars:
+      - key: EVAL_ENV
+        value: production
+      - key: DATABASE_URL           # postgresql://...; eVal switches it to the psycopg 3 driver
+        fromDatabase:
+          name: eval-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: eval-redis
+          property: connectionString
+      - key: EVAL_SECRET_KEY
+        generateValue: true
+      - key: EVAL_ENCRYPTION_KEYS   # Fernet key; paste the output of: python -m eval_app.security.crypto
+        sync: false
+      - key: EVAL_DATA_DIR
+        value: /data
+      - key: EVAL_WORK_DIR          # checkouts are temporary; keep them off the disk
+        value: /tmp/eval-work
+      - key: EVAL_TRIVY_CACHE_DIR
+        value: /data/trivy-cache
+      - key: EVAL_PROXY_FIX_HOPS    # Render's proxy terminates TLS and sets X-Forwarded-For/-Proto
+        value: "1"
+      - key: EVAL_SECURE_COOKIES
+        value: "true"
+      - key: EVAL_ALLOW_REGISTRATION   # create the first user from the Render Shell, then open up if wanted
+        value: "false"
+      - key: WEB_CONCURRENCY        # gunicorn workers
+        value: "2"
+      - key: EVAL_WORKER_CONCURRENCY   # audits run at the same time
+        value: "2"
+
+  - type: keyvalue
+    name: eval-redis
+    plan: 256mb
+    ipAllowList: []                 # private network only
+    maxmemoryPolicy: noeviction     # Celery's broker queue must never be evicted
+
+databases:
+  - name: eval-db
+    databaseName: eval
+    user: eval
+    plan: 0.5c-1g
+    postgresMajorVersion: "16"
