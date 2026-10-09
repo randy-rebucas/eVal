@@ -55,6 +55,21 @@
       {% endif %}
     </div></div>
     {% endif %}
+    {% if repo.source == 'github' %}
+    <div class="card mb-3"><div class="card-body small">
+      <h2 class="h6">GitHub access</h2>
+      <p class="mb-2">Credential: {% if repo.credential %}<strong>{{ repo.credential.label }}</strong> (…{{ repo.credential.last4 }}){% else %}none (public access only; issue creation disabled){% endif %}</p>
+      {% if g.membership.role in ['admin', 'owner'] %}
+      <form method="post" action="{{ url_for('repos.set_credential', org_slug=g.org.slug, repo_id=repo.id) }}" class="d-flex gap-2">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <select name="credential_id" class="form-select form-select-sm">
+          {% for value, label in credential_choices %}<option value="{{ value }}" {% if repo.credential_id and value == repo.credential_id|string %}selected{% endif %}>{{ label }}</option>{% endfor %}
+        </select>
+        <button class="btn btn-sm btn-outline-secondary">Save</button>
+      </form>
+      {% endif %}
+    </div></div>
+    {% endif %}
   </div>
   <div class="col-lg-7">
     <h2 class="h5">Audit history</h2>

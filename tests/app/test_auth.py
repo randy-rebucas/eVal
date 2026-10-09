@@ -87,7 +87,9 @@ def test_csrf_enforced_when_enabled(tmp_path):
         db.create_all()
         resp = app.test_client().post("/login", data={"email": "a@example.com", "password": "x"})
         assert resp.status_code == 400
+        db.session.remove()
         db.drop_all()
+        db.engine.dispose()
 
 
 def test_production_config_requires_secrets(monkeypatch):

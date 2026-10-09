@@ -2,49 +2,11 @@ from __future__ import annotations
 
 import io
 import shutil
-import zipfile
 from pathlib import Path
 
-import pytest
-
-from eval_app.integrations.github import GitHubClient, GitHubError
 from eval_app.models import Audit, Finding, IntegrationCredential, Repository, ResolvedFinding, Upload
+from tests.app.helpers import make_project, upload_new, zip_bytes
 from tests.conftest import FIXTURES
-
-FAST = ["secrets", "devops", "api_security", "database", "testing"]
-
-
-@pytest.fixture(autouse=True)
-def fast_analyzers(monkeypatch):
-    """App tests exercise the web/worker flow; restrict to built-in analyzers to keep them fast."""
-    from eval_engine.analyzers import registry
-
-    real_get = registry.get
-    monkeypatch.setattr(registry, "get", lambda names: real_get(names if names is not None else FAST))
-
-
-def zip_bytes(src: Path, mutate=None) -> bytes:
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        for p in sorted(src.rglob("*")):
-            if p.is_file():
-                z.write(p, f"myrepo-main/{p.relative_to(src).as_posix()}")
-        if mutate:
-            mutate(z)
-    return buf.getvalue()
-
-
-def make_project(client, org):
-    resp = client.post(f"/o/{org}/projects", data={"name": "Shop"})
-    return resp.headers["Location"].rsplit("/", 1)[-1]
-
-
-def upload_new(client, org, pid, data: bytes, name="vulnapp"):
-    return client.post(
-        f"/o/{org}/projects/{pid}/repos/new",
-        data={"kind": "upload", "up-name": name, "up-archive": (io.BytesIO(data), "src.zip")},
-        content_type="multipart/form-data",
-    )
 
 
 def test_upload_runs_audit_and_persists_findings(alice, db, app):
@@ -138,36 +100,6 @@ def test_audits_are_tenant_isolated(alice, bob, db):
 
 
 # ------------------------------------------------------------------------------------------------- GitHub
-@pytest.fixture
-def fake_github(monkeypatch):
-    calls = []
-    repos = {
-        "octo/shop": {"full_name": "octo/shop", "default_branch": "main", "private": False, "size": 120,
-                      "html_url": "https://github.com/octo/shop", "clone_url": "https://github.com/octo/shop.git"},
-        "octo/huge": {"full_name": "octo/huge", "default_branch": "main", "private": True, "size": 10_000_000},
-    }
-
-    def fake_request(self, method, path, **kwargs):
-        calls.append((method, path, self._headers.get("Authorization")))
-        if path == "/user":
-            if self._headers.get("Authorization") != "Bearer ghp_validtoken1234567890":
-                raise GitHubError("GitHub rejected the credential (401).", 401)
-            return {"login": "octocat"}
-        if path.startswith("/repos/") and path.count("/") == 3:
-            name = path[len("/repos/"):]
-            if name not in repos:
-                raise GitHubError("Not found on GitHub, or the credential lacks access.", 404)
-            return repos[name]
-        if path.endswith("/branches"):
-            return [{"name": "main"}, {"name": "develop"}]
-        if path.endswith("/commits"):
-            return [{"sha": "a" * 40, "commit": {"message": "Fix bug\n\nbody", "author": {"name": "Ann"}}}]
-        if path.endswith("/issues") and method == "POST":
-            return {"number": 7, "html_url": "https://github.com/octo/shop/issues/7"}
-        raise AssertionError(path)
-
-    monkeypatch.setattr(GitHubClient, "_request", fake_request)
-    return calls
 
 
 def test_github_credential_is_verified_encrypted_and_never_rendered(alice, db, fake_github):
@@ -263,7 +195,9 @@ def test_queued_audit_can_be_cancelled_and_worker_skips_it(tmp_path):
         db.session.refresh(audit)
         assert audit.status == "cancelled"
         assert run_audit.run(str(audit.id)) == "skipped"  # a late worker does not resurrect it
+        db.session.remove()  # release row locks before DDL (PostgreSQL would block DROP TABLE)
         db.drop_all()
+        db.engine.dispose()
 
 
 def test_findings_count_matches_detail(alice, db):

@@ -1,12 +1,53 @@
 {% extends "base.html" %}
+{% from "_macros.html" import risk_badge, status_badge, severity_badge, score_bar, sparkline %}
 {% block title %}{{ g.org.name }}{% endblock %}
 {% block content %}
-<h1 class="h3">{{ g.org.name }}</h1>
-<div class="list-group">
-  {% for p in projects %}
-    <a class="list-group-item list-group-item-action" href="{{ url_for('projects.detail', org_slug=g.org.slug, project_id=p.id) }}">{{ p.name }}</a>
-  {% else %}
-    <div class="list-group-item text-muted">No projects yet. <a href="{{ url_for('projects.index', org_slug=g.org.slug) }}">Create one</a>.</div>
-  {% endfor %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="h3 mb-0">{{ g.org.name }}</h1>
+  {% if g.membership.role != 'viewer' %}<a class="btn btn-sm btn-primary" href="{{ url_for('projects.index', org_slug=g.org.slug) }}"><i class="bi bi-plus-lg"></i> Project / repository</a>{% endif %}
 </div>
+
+{% if not portfolio %}
+<div class="card"><div class="card-body">
+  <h2 class="h5">Get started</h2>
+  <ol class="mb-0">
+    <li><a href="{{ url_for('projects.index', org_slug=g.org.slug) }}">Create a project</a>.</li>
+    <li>Connect a GitHub repository or upload a ZIP archive.</li>
+    <li>Run an audit and review evidence-backed findings.</li>
+  </ol>
+</div></div>
+{% else %}
+<h2 class="h5">Repositories by risk</h2>
+<div class="table-responsive">
+<table class="table align-middle">
+  <thead><tr><th>Repository</th><th>Project</th><th class="w-fit">Score</th><th>Risk</th><th>Open critical / high</th><th>Trend</th><th>Last audited</th></tr></thead>
+  <tbody>
+  {% for row in portfolio %}{% set a = row.latest %}
+    <tr>
+      <td><a href="{{ url_for('repos.detail', org_slug=g.org.slug, repo_id=row.repo.id) }}">{{ row.repo.name }}</a></td>
+      <td class="small">{{ row.repo.project.name }}</td>
+      <td>{% if a %}<a href="{{ url_for('audits.detail', org_slug=g.org.slug, audit_id=a.id) }}" class="fw-semibold">{{ a.overall_score|score }}</a>{{ score_bar(a.overall_score) }}{% else %}—{% endif %}</td>
+      <td>{{ risk_badge(a.risk_level) if a else '' }}</td>
+      <td>{% if a %}{{ severity_badge('critical') }} {{ row.open.get('critical', 0) }} &nbsp; {{ severity_badge('high') }} {{ row.open.get('high', 0) }}{% else %}<span class="text-muted small">not audited</span>{% endif %}</td>
+      <td>{{ sparkline(row.history, 120, 28) }}</td>
+      <td class="small text-muted">{{ a.finished_at|dt if a else '—' }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+
+{% if recent_audits %}
+<h2 class="h5 mt-4">Recent audits</h2>
+<table class="table table-sm">
+  <tbody>
+  {% for a in recent_audits %}
+    <tr><td><a href="{{ url_for('audits.detail', org_slug=g.org.slug, audit_id=a.id) }}">{{ a.created_at|dt }}</a></td><td>{{ a.repository.name }}</td>
+      <td class="mono small">{{ a.branch or 'upload' }} {{ a.commit_sha[:8] }}</td><td>{{ status_badge(a.status) }}</td><td>{{ a.overall_score|score }}</td><td>{{ risk_badge(a.risk_level) }}</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+<p class="small text-muted">Scores are risk indicators from automated static analysis, not guarantees of production readiness.</p>
 {% endblock %}

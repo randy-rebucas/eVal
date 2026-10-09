@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from ..extensions import db
-from ..models import ROLES, Membership, Organization, User
+from ..models import ROLES, Audit, Finding, Membership, Organization, Repository, User
 from ..security import events
 from ..security.tenancy import role_at_least
 
@@ -18,6 +18,33 @@ def user_orgs(user: User) -> list[tuple[Organization, str]]:
         .order_by(Organization.name)
     ).all()
     return [(org, role) for org, role in rows]
+
+
+def portfolio(org: Organization) -> list[dict]:
+    """Latest successful audit per repository with open critical/high counts and recent score history."""
+    repos = db.session.execute(
+        db.select(Repository).where(Repository.organization_id == org.id).order_by(Repository.name)
+    ).scalars().all()
+    rows = []
+    for repo in repos:
+        history = db.session.execute(
+            db.select(Audit).where(Audit.repository_id == repo.id, Audit.organization_id == org.id,
+                                   Audit.status == "succeeded")
+            .order_by(Audit.created_at.desc()).limit(10)
+        ).scalars().all()
+        latest = history[0] if history else None
+        open_counts = {}
+        if latest:
+            open_counts = dict(db.session.execute(
+                db.select(Finding.severity, db.func.count(Finding.id))
+                .where(Finding.audit_id == latest.id, Finding.organization_id == org.id,
+                       Finding.triage_status == "open", Finding.kind != "ai_observation")
+                .group_by(Finding.severity)
+            ).all())
+        rows.append({"repo": repo, "latest": latest, "history": list(reversed(history)), "open": open_counts})
+    risk_rank = {"Critical": 0, "High": 1, "Moderate": 2, "Low": 3}
+    rows.sort(key=lambda r: (risk_rank.get(r["latest"].risk_level, 9) if r["latest"] else 10, r["repo"].name))
+    return rows
 
 
 def members(org: Organization) -> list[Membership]:

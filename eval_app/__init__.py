@@ -44,12 +44,13 @@ def create_app(config_name: str | None = None, overrides: dict | None = None) ->
 
     from .audits.routes import bp as audits_bp
     from .auth.routes import bp as auth_bp
+    from .findings.routes import bp as findings_bp
     from .integrations.routes import bp as integrations_bp
     from .orgs.routes import bp as orgs_bp
     from .projects.repo_routes import bp as repos_bp
     from .projects.routes import bp as projects_bp
 
-    for bp in (auth_bp, orgs_bp, projects_bp, repos_bp, audits_bp, integrations_bp):
+    for bp in (auth_bp, orgs_bp, projects_bp, repos_bp, audits_bp, findings_bp, integrations_bp):
         app.register_blueprint(bp)
 
     from .celery_app import init_celery

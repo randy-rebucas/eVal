@@ -43,6 +43,7 @@ def app(tmp_path):
         yield app
         _db.session.remove()
         _db.drop_all()
+        _db.engine.dispose()  # each test builds a new app/engine; don't leak pooled connections
 
 
 @pytest.fixture

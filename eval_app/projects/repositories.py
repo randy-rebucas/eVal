@@ -145,6 +145,21 @@ def latest_upload(repo: Repository) -> Upload | None:
     ).scalar_one_or_none()
 
 
+def set_repository_credential(org: Organization, repo: Repository, credential_id) -> None:
+    if repo.source != "github":
+        raise RepositoryError("Only GitHub repositories use credentials.")
+    cred = _credential(org, credential_id)
+    if cred is not None:
+        try:
+            github_client(cred).get_repo(repo.full_name)
+        except GitHubError as exc:
+            raise RepositoryError(f"That credential cannot access {repo.full_name}: {exc}") from exc
+    repo.credential_id = cred.id if cred else None
+    events.record("repository.credential_changed", organization_id=org.id, target=repo,
+                  credential=str(cred.id) if cred else None)
+    db.session.commit()
+
+
 def delete_repository(org: Organization, repo: Repository) -> None:
     uploads = db.session.execute(db.select(Upload).where(Upload.repository_id == repo.id)).scalars().all()
     paths = [upload_path(u) for u in uploads]

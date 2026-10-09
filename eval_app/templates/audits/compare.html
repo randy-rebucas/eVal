@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% from "_macros.html" import severity_badge, risk_badge %}
+{% block title %}Compare audits{% endblock %}
+{% block content %}
+{% set repo = cmp.head.repository %}
+<nav class="small mb-2"><a href="{{ url_for('repos.detail', org_slug=g.org.slug, repo_id=repo.id) }}">{{ repo.name }}</a> /</nav>
+<h1 class="h4">Commit-to-commit comparison</h1>
+<form method="get" class="d-flex gap-2 align-items-center mb-3 small">
+  Base
+  <select name="base" class="form-select form-select-sm w-auto">
+    {% for a in options if a.id != cmp.head.id %}<option value="{{ a.id }}" {% if a.id == cmp.base.id %}selected{% endif %}>{{ a.created_at|dt }} · {{ a.commit_sha[:8] }} · {{ a.overall_score|score }}</option>{% endfor %}
+  </select>
+  → head <span class="mono">{{ cmp.head.commit_sha[:8] }}</span> ({{ cmp.head.created_at|dt }})
+  <button class="btn btn-sm btn-outline-secondary">Compare</button>
+</form>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-4"><div class="card"><div class="card-body">
+    <div class="small text-muted">Overall</div>
+    <div class="fs-4"><span class="text-muted">{{ cmp.base.overall_score|score }}</span> → <strong>{{ cmp.head.overall_score|score }}</strong>
+      {% if cmp.base.overall_score is not none and cmp.head.overall_score is not none %}{% set d = cmp.head.overall_score - cmp.base.overall_score %}
+        <span class="fs-6 {{ 'text-success' if d > 0 else 'text-danger' if d < 0 else 'text-muted' }}">{{ '%+.1f'|format(d) }}</span>{% endif %}</div>
+    <div>{{ risk_badge(cmp.base.risk_level) }} → {{ risk_badge(cmp.head.risk_level) }}</div>
+  </div></div></div>
+  <div class="col-md-8"><div class="card"><div class="card-body p-2">
+    <table class="table table-sm mb-0 small">
+      <thead><tr><th>Category</th><th>Base</th><th>Head</th><th>Δ</th></tr></thead>
+      <tbody>{% for name, (b, h) in cmp.category_delta.items() %}
+        <tr><td>{{ category_labels.get(name, name) }}</td><td>{{ b|score }}</td><td>{{ h|score }}</td>
+          <td>{% if b is not none and h is not none %}{% set d = h - b %}<span class="{{ 'text-success' if d > 0 else 'text-danger' if d < 0 else 'text-muted' }}">{{ '%+.1f'|format(d) }}</span>{% else %}—{% endif %}</td></tr>
+      {% endfor %}</tbody>
+    </table>
+  </div></div></div>
+</div>
+
+{% for title, items, cls in [('Introduced', cmp.introduced, 'text-danger'), ('Fixed', cmp.fixed, 'text-success'), ('Persisting', cmp.persisting, 'text-muted')] %}
+<h2 class="h5 {{ cls }}">{{ title }} ({{ items|length }})</h2>
+<ul class="list-unstyled mb-4">
+  {% for f in items[:200] %}
+  <li class="mb-1">{{ severity_badge(f.severity) }} <a href="{{ url_for('findings.detail', org_slug=g.org.slug, finding_id=f.id) }}">{{ f.title }}</a> <span class="mono small text-muted">{{ f.location }}</span></li>
+  {% else %}<li class="text-muted small">None.</li>{% endfor %}
+</ul>
+{% endfor %}
+{% endblock %}

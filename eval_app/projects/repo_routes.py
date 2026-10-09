@@ -97,6 +97,7 @@ def detail(org_slug, repo_id):
         "repos/detail.html", repo=repo, audits=audits, branches=branches, commits=commits, gh_error=gh_error,
         selected_branch=selected_branch, run_form=RunAuditForm(), upload_form=UploadForm(),
         latest_upload=repo_service.latest_upload(repo) if repo.source == "upload" else None,
+        credential_choices=_credential_choices() if repo.source == "github" else [],
     )
 
 
@@ -137,6 +138,19 @@ def upload(org_slug, repo_id):
         flash(str(exc), "danger")
         return redirect(url_for("repos.detail", org_slug=org_slug, repo_id=repo.id))
     return redirect(url_for("audits.detail", org_slug=org_slug, audit_id=audit.id))
+
+
+@bp.post("/repos/<repo_id>/credential")
+@org_required("admin")
+def set_credential(org_slug, repo_id):
+    repo = get_scoped_or_404(Repository, repo_id)
+    try:
+        repo_service.set_repository_credential(g.org, repo, request.form.get("credential_id") or None)
+        flash("Repository credential updated.", "success")
+    except repo_service.RepositoryError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+    return redirect(url_for("repos.detail", org_slug=org_slug, repo_id=repo.id))
 
 
 @bp.post("/repos/<repo_id>/delete")

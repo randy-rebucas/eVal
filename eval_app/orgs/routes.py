@@ -54,7 +54,8 @@ def dashboard(org_slug):
         .scalars()
         .all()
     )
-    return render_template("orgs/dashboard.html", projects=projects, recent_audits=recent)
+    return render_template("orgs/dashboard.html", projects=projects, recent_audits=recent,
+                           portfolio=services.portfolio(g.org))
 
 
 @bp.route("/o/<org_slug>/members", methods=["GET", "POST"])

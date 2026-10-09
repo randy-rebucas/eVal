@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% from "_macros.html" import severity_badge, kind_badge %}
+{% block title %}{{ f.title }}{% endblock %}
+{% block content %}
+{% set repo = audit.repository %}
+<nav class="small mb-2"><a href="{{ url_for('repos.detail', org_slug=g.org.slug, repo_id=repo.id) }}">{{ repo.name }}</a> / <a href="{{ url_for('audits.detail', org_slug=g.org.slug, audit_id=audit.id) }}#findings">audit {{ audit.created_at|dt }}</a> /</nav>
+<div class="row g-4">
+  <div class="col-lg-8">
+    <h1 class="h4">{{ severity_badge(f.severity) }} {{ f.title }}</h1>
+    <p class="mb-3">{{ kind_badge(f.kind) }} <span class="small text-muted ms-2">confidence <strong>{{ f.confidence }}</strong> · {{ f.category }} · lifecycle <strong>{{ f.lifecycle }}</strong></span></p>
+
+    <h2 class="h6">Location</h2>
+    <p class="mono">{{ f.location }}{% if f.line_end and f.line_end != f.line_start %}–{{ f.line_end }}{% endif %}</p>
+
+    <h2 class="h6">What was found</h2>
+    <p>{{ f.description }}</p>
+
+    {% if f.evidence %}
+    <h2 class="h6">Evidence <span class="small text-muted fw-normal">(secrets redacted)</span></h2>
+    <pre class="evidence">{{ f.evidence }}</pre>
+    {% endif %}
+
+    <h2 class="h6">Recommended remediation</h2>
+    <p>{{ f.remediation }}</p>
+
+    {% if f.ai_explanation and f.ai_explanation.get('explanation') %}
+    <div class="card border-primary-subtle mb-3"><div class="card-body">
+      <h2 class="h6"><i class="bi bi-stars"></i> AI-assisted explanation <span class="badge kind kind-ai_observation">AI-generated · verify before applying</span></h2>
+      <p>{{ f.ai_explanation.explanation }}</p>
+      {% if f.ai_explanation.get('remediation_steps') %}<ol>{% for s in f.ai_explanation.remediation_steps %}<li>{{ s }}</li>{% endfor %}</ol>{% endif %}
+      {% if f.ai_explanation.get('suggested_patch') %}
+        <p class="small mb-1">Suggested change (not applied — eVal never modifies your code):</p>
+        <pre class="evidence">{{ f.ai_explanation.suggested_patch }}</pre>
+      {% endif %}
+      {% if f.ai_explanation.get('false_positive_likelihood') %}<p class="small text-muted mb-0">AI estimate of false-positive likelihood: {{ f.ai_explanation.false_positive_likelihood }}</p>{% endif %}
+    </div></div>
+    {% endif %}
+
+    {% if f.references %}
+    <h2 class="h6">References</h2>
+    <ul>{% for r in f.references %}<li>{% if r.startswith('https://') %}<a href="{{ r }}" rel="noopener noreferrer" target="_blank">{{ r }}</a>{% else %}{{ r }}{% endif %}</li>{% endfor %}</ul>
+    {% endif %}
+  </div>
+  <div class="col-lg-4">
+    <div class="card mb-3"><div class="card-body small">
+      <dl class="mb-0">
+        <dt>Rule</dt><dd class="mono">{{ f.rule_id }}</dd>
+        <dt>Reported by</dt><dd>{{ f.sources|join(', ') }}</dd>
+        <dt>Fingerprint</dt><dd class="mono text-break">{{ f.fingerprint[:24] }}…</dd>
+        <dt>Commit</dt><dd class="mono">{{ audit.commit_sha[:12] or 'n/a' }}</dd>
+      </dl>
+    </div></div>
+    {% if g.membership.role != 'viewer' %}
+    <div class="card mb-3"><div class="card-body">
+      <h2 class="h6">Triage</h2>
+      <form method="post" action="{{ url_for('findings.triage', org_slug=g.org.slug, finding_id=f.id) }}" class="d-flex gap-2">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <select name="status" class="form-select form-select-sm">
+          {% for s in triage_statuses %}<option value="{{ s }}" {% if s == f.triage_status %}selected{% endif %}>{{ s.replace('_', ' ') }}</option>{% endfor %}
+        </select>
+        <button class="btn btn-sm btn-primary">Save</button>
+      </form>
+      <p class="small text-muted mt-2 mb-0">“False positive” and “accepted risk” carry over to later audits of this repository. Scores are not changed by triage.</p>
+    </div></div>
+    {% endif %}
+    {% if repo.source == 'github' %}
+    <div class="card mb-3"><div class="card-body">
+      <h2 class="h6"><i class="bi bi-github"></i> GitHub issue</h2>
+      {% if issue %}<a href="{{ issue.issue_url }}" rel="noopener noreferrer" target="_blank">#{{ issue.issue_number }}</a>
+      {% elif g.membership.role != 'viewer' and repo.credential %}
+        <form method="post" action="{{ url_for('findings.create_issues', org_slug=g.org.slug, audit_id=audit.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="finding_ids" value="{{ f.id }}">
+          <button class="btn btn-sm btn-outline-dark">Create issue</button>
+        </form>
+      {% else %}<span class="small text-muted">No issue. A repository credential with Issues: write is required.</span>{% endif %}
+    </div></div>
+    {% endif %}
+    <div class="card"><div class="card-body small">
+      <h2 class="h6">History of this finding</h2>
+      <ul class="list-unstyled mb-0">
+        {% for hf, ha in history %}<li><a href="{{ url_for('findings.detail', org_slug=g.org.slug, finding_id=hf.id) }}">{{ ha.created_at|dt }}</a> <span class="mono">{{ ha.commit_sha[:8] }}</span> · {{ hf.lifecycle }}{% if hf.triage_status != 'open' %} · {{ hf.triage_status.replace('_',' ') }}{% endif %}</li>{% endfor %}
+      </ul>
+    </div></div>
+  </div>
+</div>
+{% endblock %}
