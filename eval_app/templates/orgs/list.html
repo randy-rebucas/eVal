@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% from "_macros.html" import field %}
+{% block title %}Organizations{% endblock %}
+{% block content %}
+<div class="row g-4">
+  <div class="col-lg-7">
+    <h1 class="h3">Your organizations</h1>
+    <div class="list-group">
+      {% for org, role in orgs %}
+        <a class="list-group-item list-group-item-action d-flex justify-content-between" href="{{ url_for('orgs.dashboard', org_slug=org.slug) }}">
+          <span>{{ org.name }}</span><span class="badge text-bg-light">{{ role }}</span>
+        </a>
+      {% else %}
+        <div class="list-group-item text-muted">You are not a member of any organization yet.</div>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="col-lg-5">
+    <div class="card"><div class="card-body">
+      <h2 class="h5">New organization</h2>
+      <form method="post" novalidate>{{ form.hidden_tag() }}{{ field(form.name) }}<button class="btn btn-primary">Create</button></form>
+    </div></div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,25 @@
+{% macro field(f, type=None) %}
+  <div class="mb-3">
+    {{ f.label(class="form-label") }}
+    {% if f.type == 'SelectField' %}
+      {{ f(class="form-select" + (" is-invalid" if f.errors else "")) }}
+    {% else %}
+      {{ f(class="form-control" + (" is-invalid" if f.errors else "")) }}
+    {% endif %}
+    {% for e in f.errors %}<div class="invalid-feedback">{{ e }}</div>{% endfor %}
+  </div>
+{% endmacro %}
+
+{% macro severity_badge(sev) %}<span class="badge sev sev-{{ sev }}">{{ sev|upper }}</span>{% endmacro %}
+
+{% macro risk_badge(risk) %}{% if risk %}<span class="badge risk risk-{{ risk|lower }}">{{ risk }}</span>{% endif %}{% endmacro %}
+
+{% macro status_badge(status) %}
+  {% set cls = {'queued':'secondary','running':'primary','succeeded':'success','failed':'danger','cancelled':'dark'}[status] %}
+  <span class="badge text-bg-{{ cls }}">{{ status }}</span>
+{% endmacro %}
+
+{% macro kind_badge(kind) %}
+  {% set label = {'confirmed':'Confirmed','potential':'Potential risk','estimate':'Static estimate','ai_observation':'AI observation'}[kind] %}
+  <span class="badge kind kind-{{ kind }}">{{ label }}</span>
+{% endmacro %}

@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}{{ project.name }}{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-start mb-3">
+  <div>
+    <h1 class="h3 mb-0">{{ project.name }}</h1>
+    {% if project.description %}<p class="text-muted mb-0">{{ project.description }}</p>{% endif %}
+  </div>
+  {% if g.membership.role in ['admin', 'owner'] %}
+  <form method="post" action="{{ url_for('projects.delete', org_slug=g.org.slug, project_id=project.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <button class="btn btn-sm btn-outline-danger" data-confirm="Delete this project and all its audits?">Delete project</button>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}{{ g.org.name }}{% endblock %}
+{% block content %}
+<h1 class="h3">{{ g.org.name }}</h1>
+<div class="list-group">
+  {% for p in projects %}
+    <a class="list-group-item list-group-item-action" href="{{ url_for('projects.detail', org_slug=g.org.slug, project_id=p.id) }}">{{ p.name }}</a>
+  {% else %}
+    <div class="list-group-item text-muted">No projects yet. <a href="{{ url_for('projects.index', org_slug=g.org.slug) }}">Create one</a>.</div>
+  {% endfor %}
+</div>
+{% endblock %}

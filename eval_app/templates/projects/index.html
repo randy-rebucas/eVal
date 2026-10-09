@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% from "_macros.html" import field %}
+{% block title %}Projects{% endblock %}
+{% block content %}
+<div class="row g-4">
+  <div class="col-lg-8">
+    <h1 class="h3">Projects</h1>
+    <div class="list-group">
+      {% for p in projects %}
+        <a class="list-group-item list-group-item-action" href="{{ url_for('projects.detail', org_slug=g.org.slug, project_id=p.id) }}">
+          <div class="fw-semibold">{{ p.name }}</div>
+          {% if p.description %}<div class="small text-muted text-truncate">{{ p.description }}</div>{% endif %}
+          <div class="small text-muted">{{ p.repositories|length }} repositor{{ 'y' if p.repositories|length == 1 else 'ies' }}</div>
+        </a>
+      {% else %}
+        <div class="list-group-item text-muted">No projects yet. Create one to connect a repository.</div>
+      {% endfor %}
+    </div>
+  </div>
+  {% if g.membership.role != 'viewer' %}
+  <div class="col-lg-4">
+    <div class="card"><div class="card-body">
+      <h2 class="h5">New project</h2>
+      <form method="post" novalidate>{{ form.hidden_tag() }}{{ field(form.name) }}{{ field(form.description) }}<button class="btn btn-primary">Create project</button></form>
+    </div></div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% from "_macros.html" import field %}
+{% block title %}Register{% endblock %}
+{% block content %}
+<div class="row justify-content-center"><div class="col-md-6 col-lg-5">
+  <h1 class="h3 mb-3">Create your eVal account</h1>
+  <form method="post" novalidate>
+    {{ form.hidden_tag() }}
+    {{ field(form.name) }}
+    {{ field(form.email) }}
+    {{ field(form.password) }}
+    <div class="form-text mb-3 mt-n2">At least 12 characters, combining two of: lowercase, uppercase, digits, symbols.</div>
+    {{ field(form.org_name) }}
+    <button class="btn btn-primary w-100">Create account</button>
+  </form>
+  <p class="mt-3 small">Already registered? <a href="{{ url_for('auth.login') }}">Log in</a></p>
+</div></div>
+{% endblock %}

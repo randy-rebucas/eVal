@@ -1,0 +1,72 @@
+# Local / single-host deployment. For development, `docker compose up -d postgres redis` is enough and the
+# app can run from a virtualenv (see README).
+name: eval
+
+x-app: &app
+  build: .
+  env_file: .env
+  environment:
+    DATABASE_URL: postgresql+psycopg://eval:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/eval
+    REDIS_URL: redis://redis:6379/0
+    EVAL_DATA_DIR: /data
+  volumes:
+    - eval-data:/data
+  depends_on:
+    postgres: { condition: service_healthy }
+    redis: { condition: service_healthy }
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: eval
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: eval
+    ports: ["127.0.0.1:55450:5432"]
+    volumes: [pg-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eval -d eval"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports: ["127.0.0.1:56390:6379"]
+    volumes: [redis-data:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 10
+
+  migrate:
+    <<: *app
+    command: ["flask", "db", "upgrade"]
+    restart: "no"
+
+  web:
+    <<: *app
+    ports: ["127.0.0.1:8000:8000"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+  worker:
+    <<: *app
+    command: ["celery", "-A", "eval_app.celery_worker:celery", "worker", "--loglevel=INFO",
+              "--concurrency=2", "--max-tasks-per-child=20", "-Q", "audits"]
+    # Analyzers run untrusted repository content through static tools; constrain the container.
+    read_only: true
+    tmpfs: ["/tmp:size=1g", "/work:size=4g"]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    pids_limit: 512
+    mem_limit: 4g
+    cpus: 2.0
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+
+volumes:
+  pg-data:
+  redis-data:
+  eval-data:
