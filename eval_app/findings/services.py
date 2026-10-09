@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, timedelta
 
-from flask import url_for
+from flask import current_app, url_for
+from sqlalchemy import and_
+from sqlalchemy import update as sa_update
 
 from eval_engine.findings import SEVERITY_ORDER
 from eval_engine.redaction import redact
@@ -12,7 +15,16 @@ from eval_engine.redaction import redact
 from ..extensions import db
 from ..integrations.github import GitHubError
 from ..integrations.services import CredentialError, github_client
-from ..models import TRIAGE_STATUSES, Audit, Finding, GitHubIssueLink, Organization, ResolvedFinding
+from ..models import (
+    TRIAGE_DISMISSED,
+    TRIAGE_STATUSES,
+    Audit,
+    Finding,
+    GitHubIssueLink,
+    Organization,
+    ResolvedFinding,
+    utcnow,
+)
 from ..security import events
 
 PAGE_SIZE = 50
@@ -47,13 +59,92 @@ def filtered_findings(audit: Audit, args: dict, page: int = 1):
     return db.paginate(q, page=max(page, 1), per_page=PAGE_SIZE, error_out=False)
 
 
-def set_triage(org: Organization, finding: Finding, status: str) -> None:
+MIN_REASON_CHARS = 10
+
+
+def today() -> date:
+    return utcnow().date()
+
+
+def _parse_date(value) -> date | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, date):
+        return value
+    try:
+        return date.fromisoformat(str(value).strip())
+    except ValueError as exc:
+        raise FindingError("Review date must be a date (YYYY-MM-DD).") from exc
+
+
+def set_triage(org: Organization, finding: Finding, status: str, *, reason: str = "", owner: str = "",
+               expires_on=None, user_id=None) -> None:
+    """Record a triage decision.
+
+    * accepted_risk — needs a reason, an accountable owner (team or vendor) and a review date within
+      ``ACCEPTED_RISK_MAX_DAYS``. On that date the finding reopens.
+    * false_positive — needs a reason; a review date is optional (use one when the dismissal depends on
+      something that may change, e.g. "feature flag is off").
+    * open / fixed — clear any earlier justification.
+    """
     if status not in TRIAGE_STATUSES:
         raise FindingError("Unknown triage status.")
+    reason, owner = (reason or "").strip()[:4000], (owner or "").strip()[:200]
+    expires = _parse_date(expires_on)
+    max_days = current_app.config.get("ACCEPTED_RISK_MAX_DAYS", 365)
+    if status in TRIAGE_DISMISSED:
+        if len(reason) < MIN_REASON_CHARS:
+            raise FindingError(f"Explain the decision (at least {MIN_REASON_CHARS} characters).")
+        if status == "accepted_risk" and not owner:
+            raise FindingError("Name who owns the fix: a team, or the vendor for third-party code.")
+        if status == "accepted_risk" and expires is None:
+            raise FindingError("Accepted risks need a review date.")
+        if expires is not None and not today() < expires <= today() + timedelta(days=max_days):
+            raise FindingError(f"The review date must be in the future and at most {max_days} days away.")
+    else:
+        reason, owner, expires = "", "", None
     old = finding.triage_status
     finding.triage_status = status
-    events.record("finding.triaged", organization_id=org.id, target=finding, old=old, new=status)
+    finding.triage_reason, finding.triage_owner, finding.triage_expires_on = reason, owner, expires
+    finding.triaged_by_id, finding.triaged_at = user_id, utcnow()
+    events.record("finding.triaged", organization_id=org.id, target=finding, old=old, new=status,
+                  reason=reason or None, owner=owner or None, expires_on=expires.isoformat() if expires else None)
     db.session.commit()
+
+
+def reopen_expired_triage(organization_id) -> int:
+    """Reopen findings whose accepted risk / false-positive review date has passed. The reason, owner and date
+    are kept so the UI can show what lapsed. Returns the number of findings reopened."""
+    expired = and_(Finding.organization_id == organization_id, Finding.triage_status.in_(TRIAGE_DISMISSED),
+                   Finding.triage_expires_on.is_not(None), Finding.triage_expires_on <= today())
+    count = db.session.scalar(db.select(db.func.count(Finding.id)).where(expired))
+    if not count:
+        return 0
+    db.session.execute(sa_update(Finding).where(expired).values(triage_status="open")
+                       .execution_options(synchronize_session=False))
+    events.record("finding.triage_expired", organization_id=organization_id, count=count)
+    db.session.commit()
+    db.session.expire_all()
+    return count
+
+
+def risk_register(org: Organization) -> list[tuple[Finding, Audit]]:
+    """Accepted risks and false positives in each repository's latest successful (non-PR) audit, soonest
+    review date first — the list to walk through with owning teams and vendors."""
+    latest = (
+        db.select(Audit.repository_id, db.func.max(Audit.created_at).label("created_at"))
+        .where(Audit.organization_id == org.id, Audit.status == "succeeded", Audit.pr_number.is_(None))
+        .group_by(Audit.repository_id).subquery()
+    )
+    rows = db.session.execute(
+        db.select(Finding, Audit).join(Audit, Audit.id == Finding.audit_id)
+        .join(latest, and_(latest.c.repository_id == Audit.repository_id, latest.c.created_at == Audit.created_at))
+        .where(Finding.organization_id == org.id, Audit.organization_id == org.id,
+               Finding.triage_status.in_(TRIAGE_DISMISSED))
+    ).all()
+    rank = {s: i for i, s in enumerate(SEVERITY_ORDER)}
+    return sorted(((f, a) for f, a in rows),
+                  key=lambda r: (r[0].triage_expires_on or date.max, rank.get(r[0].severity, 9)))
 
 
 @dataclass
@@ -92,13 +183,27 @@ def finding_to_dict(f: Finding) -> dict:
         "description": f.description, "remediation": f.remediation, "file_path": f.file_path,
         "line_start": f.line_start, "line_end": f.line_end, "evidence": f.evidence, "sources": f.sources,
         "references": f.references, "lifecycle": f.lifecycle, "triage_status": f.triage_status,
+        "triage": triage_to_dict(f),
         "ai_explanation": f.ai_explanation or {},
     }
 
 
-def report_model(audit: Audit, include_triaged: bool = False) -> dict:
-    """The engine's report model, rebuilt from persisted rows (so reports reflect triage decisions)."""
-    findings = [f for f in audit.findings if include_triaged or f.triage_status == "open"]
+def triage_to_dict(f: Finding) -> dict:
+    return {
+        "status": f.triage_status, "reason": f.triage_reason, "owner": f.triage_owner,
+        "expires_on": f.triage_expires_on.isoformat() if f.triage_expires_on else None,
+        "triaged_by": f.triaged_by.email if f.triaged_by else None,
+        "triaged_at": f.triaged_at.isoformat() if f.triaged_at else None,
+        # The finding was dismissed earlier and reopened because its review date passed.
+        "expired": f.triage_status == "open" and f.triage_expires_on is not None,
+    }
+
+
+def report_model(audit: Audit, include_triaged: bool = False, include_dismissed: bool = False) -> dict:
+    """The engine's report model, rebuilt from persisted rows (so reports reflect triage decisions).
+    ``include_dismissed`` adds accepted risks and false positives (SARIF reports them as suppressed)."""
+    findings = [f for f in audit.findings if include_triaged or f.triage_status == "open"
+                or (include_dismissed and f.triage_status in TRIAGE_DISMISSED)]
     resolved = [{"fingerprint": r.fingerprint, "title": r.title, "severity": r.severity, "rule_id": r.rule_id,
                  "file_path": r.file_path} for r in audit.resolved]
     lifecycle = dict((audit.stats or {}).get("lifecycle") or {})

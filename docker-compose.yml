@@ -2,17 +2,19 @@
 # app can run from a virtualenv (see README).
 name: eval
 
-x-app: &app
-  build: .
-  env_file: .env
-  environment:
+x-env: &env
     DATABASE_URL: postgresql+psycopg://eval:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/eval
     REDIS_URL: redis://redis:6379/0
     EVAL_ENV: production
     EVAL_DATA_DIR: /data
     EVAL_WORK_DIR: /work
-    EVAL_TRIVY_CACHE_DIR: /data/trivy-cache
+    EVAL_TRIVY_CACHE_DIR: /trivy-cache
     # For plain-http local use set EVAL_SECURE_COOKIES=false in .env; keep true behind TLS.
+
+x-app: &app
+  build: .
+  env_file: .env
+  environment: *env
   volumes:
     - eval-data:/data
   depends_on:
@@ -67,6 +69,10 @@ services:
     pids_limit: 512
     mem_limit: 4g
     cpus: 2.0
+    # The worker only reads uploads; analyzers must not be able to modify other tenants' archives.
+    volumes:
+      - eval-data:/data:ro
+      - trivy-cache:/trivy-cache
     depends_on:
       migrate: { condition: service_completed_successfully }
 
@@ -74,3 +80,4 @@ volumes:
   pg-data:
   redis-data:
   eval-data:
+  trivy-cache:

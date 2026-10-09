@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from ..auth.services import slugify
 from ..extensions import db
-from ..models import Organization, Project
+from ..models import Organization, Project, Repository, Upload
 from ..security import events
 
 
@@ -29,6 +29,16 @@ def create_project(org: Organization, name: str, description: str = "") -> Proje
 
 
 def delete_project(org: Organization, project: Project) -> None:
+    """Delete the project, its repositories and audits, and the uploaded source archives on disk."""
+    from .repositories import upload_path
+
+    uploads = db.session.execute(
+        db.select(Upload).join(Repository, Repository.id == Upload.repository_id)
+        .where(Repository.project_id == project.id, Upload.organization_id == org.id)
+    ).scalars().all()
+    paths = [upload_path(u) for u in uploads]
     events.record("project.deleted", organization_id=org.id, target=project, name=project.name)
     db.session.delete(project)
     db.session.commit()
+    for p in paths:
+        p.unlink(missing_ok=True)

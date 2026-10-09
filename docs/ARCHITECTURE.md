@@ -73,7 +73,7 @@ eval_app/
   orgs/              organizations, memberships, invites
   projects/          projects, repositories, uploads
   audits/            audit creation, status, progress, comparison; Celery tasks
-  findings/          finding detail, triage, comparisons, report models, PR summaries, GitHub issues
+  findings/          finding detail, triage + risk register, comparisons, report models, PR summaries, GitHub issues
   integrations/      GitHub client, credential management, AI settings and API token pages
   api/               JSON API (/api/v1) with bearer tokens
   ai_config.py       per-org AI settings -> Enricher for the worker
@@ -132,7 +132,7 @@ findings are per-audit; `fingerprint` links occurrences of the same problem acro
 | `repositories` | id, organization_id, project_id, source ∈ {github, upload}, full_name, default_branch, credential_id (nullable) |
 | `uploads` | id, organization_id, repository_id, stored_path, sha256, size_bytes |
 | `audits` | id, organization_id, repository_id, upload_id, branch, commit_sha, trigger, pr_number, pr_base_ref, changed_files, status, stage, progress, error, scores (JSON), risk_level, overall_score, tool_status (JSON), ai_summary, engine_version, started/finished_at, previous_audit_id (lifecycle baseline) |
-| `findings` | id, organization_id, audit_id, rule_id, fingerprint, category, severity, confidence, kind (confirmed/potential/ai_observation/estimate), title, description, file_path, line_start, line_end, evidence (redacted snippet), remediation, sources (JSON), lifecycle ∈ {new, existing, recurring}, triage_status ∈ {open, accepted_risk, false_positive, fixed}, ai_explanation (JSON) |
+| `findings` | id, organization_id, audit_id, rule_id, fingerprint, category, severity, confidence, kind (confirmed/potential/ai_observation/estimate), title, description, file_path, line_start, line_end, evidence (redacted snippet), remediation, sources (JSON), lifecycle ∈ {new, existing, recurring}, triage_status ∈ {open, accepted_risk, false_positive, fixed}, triage_reason, triage_owner (team or vendor), triage_expires_on, triaged_by_id, triaged_at, ai_explanation (JSON) |
 | `resolved_findings` | per-audit record of fingerprints present in the previous audit but absent now |
 | `rules` | rule_id (pk), title, category, default_severity, description, references |
 | `integration_credentials` | id, organization_id, provider, label, encrypted_secret (Fernet), last4, created_by |

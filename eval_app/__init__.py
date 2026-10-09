@@ -23,6 +23,11 @@ def create_app(config_name: str | None = None, overrides: dict | None = None) ->
     if overrides:
         app.config.update(overrides)
     config_module.validate(app.config)
+    if app.config.get("PROXY_FIX_HOPS"):
+        from werkzeug.middleware.proxy_fix import ProxyFix
+
+        hops = int(app.config["PROXY_FIX_HOPS"])
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=hops, x_proto=hops)
 
     app.config["DATA_DIR"].mkdir(parents=True, exist_ok=True)
     _configure_logging(app)
@@ -94,11 +99,15 @@ def _configure_logging(app: Flask) -> None:
 
 
 def _register_security_headers(app: Flask) -> None:
+    # CDN sources are pinned to the exact package versions base.html loads (with SRI), not the whole CDN, which
+    # serves any npm package and would let an injected <script> pull in arbitrary code.
+    bootstrap = "https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/"
+    icons = "https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/"
     csp = (
         "default-src 'self'; "
-        "style-src 'self' https://cdn.jsdelivr.net; "
-        "script-src 'self' https://cdn.jsdelivr.net; "
-        "img-src 'self' data:; font-src 'self' https://cdn.jsdelivr.net; "
+        f"style-src 'self' {bootstrap} {icons}; "
+        f"script-src 'self' {bootstrap}; "
+        f"img-src 'self' data:; font-src 'self' {icons}; "
         "frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
     )
 

@@ -1,4 +1,5 @@
-"""Ruff: Python correctness and maintainability. Runs with ``--isolated`` so repository config is ignored."""
+"""Ruff: Python correctness and maintainability. Runs with ``--isolated`` so repository config is ignored, and
+``--ignore-noqa`` so inline suppressions are too."""
 
 from __future__ import annotations
 
@@ -25,7 +26,8 @@ class RuffAnalyzer(Analyzer):
     def run(self, ctx: AnalyzerContext):
         result = self.run_tool(
             ctx,
-            ["check", ".", "--isolated", "--select", SELECT, "--output-format", "json", "--no-cache",
+            # --ignore-noqa: inline noqa suppressions in the audited code must not hide findings.
+            ["check", ".", "--isolated", "--ignore-noqa", "--select", SELECT, "--output-format", "json", "--no-cache",
              "--exit-zero", "--target-version", "py312", "--extend-exclude", ".venv,venv,node_modules,dist,build"],
             ok_codes=(0,),
         )

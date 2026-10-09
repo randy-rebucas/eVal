@@ -21,6 +21,7 @@
       <ul class="navbar-nav me-auto">
         <li class="nav-item"><a class="nav-link" href="{{ url_for('orgs.dashboard', org_slug=g.org.slug) }}">Dashboard</a></li>
         <li class="nav-item"><a class="nav-link" href="{{ url_for('projects.index', org_slug=g.org.slug) }}">Projects</a></li>
+        <li class="nav-item"><a class="nav-link" href="{{ url_for('findings.risks', org_slug=g.org.slug) }}">Risk register</a></li>
         {% block extra_nav %}{% endblock %}
         <li class="nav-item"><a class="nav-link" href="{{ url_for('orgs.members', org_slug=g.org.slug) }}">Members</a></li>
         <li class="nav-item"><a class="nav-link" href="{{ url_for('integrations.index', org_slug=g.org.slug) }}">Integrations</a></li>

@@ -60,7 +60,14 @@ class BaseConfig:
     WTF_CSRF_TIME_LIMIT = None
 
     LOGIN_RATE_LIMIT = _int("EVAL_LOGIN_RATE_LIMIT", 10)  # attempts per 5 minutes per IP+email
+    LOGIN_IP_RATE_LIMIT = _int("EVAL_LOGIN_IP_RATE_LIMIT", 50)  # attempts per 5 minutes per IP (any email)
     ALLOW_REGISTRATION = _bool("EVAL_ALLOW_REGISTRATION", True)
+    # Number of trusted reverse proxies in front of the app (X-Forwarded-For/-Proto). 0 = direct exposure.
+    # Without it, every client appears to come from the proxy's IP and shares one rate-limit bucket.
+    PROXY_FIX_HOPS = _int("EVAL_PROXY_FIX_HOPS", 0)
+    MAX_ORGS_PER_USER = _int("EVAL_MAX_ORGS_PER_USER", 5)  # organizations a user may create (owner role)
+    # Longest an accepted risk (or a time-boxed false positive) may last before the finding reopens for review.
+    ACCEPTED_RISK_MAX_DAYS = _int("EVAL_ACCEPTED_RISK_MAX_DAYS", 365)
     TESTING = False
     DEBUG = False
 

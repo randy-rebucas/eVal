@@ -10,7 +10,7 @@ from eval_engine.reports import CONTENT_TYPES, FORMATS, render
 from ..audits.services import AuditError, create_audit, create_pr_audit
 from ..extensions import db
 from ..findings import services as findings_service
-from ..models import Audit, Project, Repository
+from ..models import Audit, Finding, Project, Repository
 from ..projects import repositories as repo_service
 from ..security.tenancy import get_scoped_or_404, scoped_select
 from .auth import api_auth
@@ -138,8 +138,33 @@ def report(audit_id, fmt):
     a = get_scoped_or_404(Audit, audit_id)
     if a.status != "succeeded":
         return jsonify(error=f"Audit is {a.status}."), 409
-    body = render(findings_service.report_model(a, include_triaged=request.args.get("all") == "1"), fmt)
+    body = render(findings_service.report_model(a, include_triaged=request.args.get("all") == "1",
+                                                include_dismissed=fmt == "sarif"), fmt)
     return Response(body, headers={"Content-Type": CONTENT_TYPES[fmt]})
+
+
+@bp.post("/findings/<finding_id>/triage")
+@api_auth("member")
+def triage(finding_id):
+    """Record a triage decision: JSON ``{"status", "reason", "owner", "expires_on": "YYYY-MM-DD"}``."""
+    f = get_scoped_or_404(Finding, finding_id)
+    body = request.get_json(silent=True) or {}
+    text = {k: body.get(k) if isinstance(body.get(k), str) else "" for k in ("status", "reason", "owner", "expires_on")}
+    try:
+        findings_service.set_triage(g.org, f, text["status"], reason=text["reason"], owner=text["owner"],
+                                    expires_on=text["expires_on"] or None, user_id=g.api_token.user_id)
+    except findings_service.FindingError as exc:
+        db.session.rollback()
+        return jsonify(error=str(exc)), 422
+    return jsonify(finding=findings_service.finding_to_dict(f))
+
+
+@bp.get("/risks")
+@api_auth()
+def risks():
+    """Risk register: accepted risks and false positives in each repository's latest audit, by review date."""
+    return jsonify(risks=[{**findings_service.finding_to_dict(f), "audit_id": str(a.id),
+                           "repository_id": str(a.repository_id)} for f, a in findings_service.risk_register(g.org)])
 
 
 @bp.post("/audits/<audit_id>/pr-comment")

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 from flask import current_app
 
 from ..extensions import db
@@ -12,6 +14,30 @@ MAX_ACTIVE_AUDITS_PER_ORG = 5
 
 class AuditError(Exception):
     pass
+
+
+QUEUED_EXPIRY = timedelta(hours=6)
+
+
+def expire_stale_audits(org: Organization) -> int:
+    """Fail audits that can no longer be running (lost worker or lost broker message), so they stop counting
+    against the per-organization limit. A running audit is stale once Celery's hard time limit has passed."""
+    now = utcnow()
+    running_cutoff = now - timedelta(seconds=current_app.config["ANALYZER_TIMEOUT_SECONDS"] * 6 + 300)
+    stale = db.session.execute(db.select(Audit).where(
+        Audit.organization_id == org.id,
+        db.or_(
+            db.and_(Audit.status == "running", Audit.started_at < running_cutoff),
+            db.and_(Audit.status == "queued", Audit.created_at < now - QUEUED_EXPIRY),
+        ),
+    )).scalars().all()
+    for audit in stale:
+        audit.status = audit.stage = "failed"
+        audit.error = "The audit did not finish (worker or queue lost). Run it again."
+        audit.finished_at = now
+    if stale:
+        db.session.commit()
+    return len(stale)
 
 
 def previous_successful(repo: Repository, before: Audit | None = None, branch: str | None = None) -> Audit | None:
@@ -61,6 +87,7 @@ def create_audit(
 ) -> Audit:
     from eval_engine.workspace import WorkspaceError, validate_ref
 
+    expire_stale_audits(org)
     active = db.session.scalar(
         db.select(db.func.count(Audit.id)).where(
             Audit.organization_id == org.id, Audit.status.in_(ACTIVE_STATUSES)

@@ -180,7 +180,7 @@
           <div class="small text-muted">{{ category_labels.get(f.category, f.category) }} · {{ f.rule_id }}{% if f.sources|length > 1 %} · confirmed by {{ f.sources|length }} analyzers{% endif %}</div></td>
         <td class="mono small text-break">{{ f.location }}</td>
         <td>{{ kind_badge(f.kind) }}</td>
-        <td class="small">{% if f.lifecycle == 'new' %}<span class="text-danger">new</span>{% elif f.lifecycle == 'recurring' %}<span class="text-warning">recurring</span>{% else %}existing{% endif %}{% if f.triage_status != 'open' %}<br><span class="text-muted">{{ f.triage_status.replace('_', ' ') }}</span>{% endif %}</td>
+        <td class="small">{% if f.lifecycle == 'new' %}<span class="text-danger">new</span>{% elif f.lifecycle == 'recurring' %}<span class="text-warning">recurring</span>{% else %}existing{% endif %}{% if f.triage_status != 'open' %}<br><span class="text-muted">{{ f.triage_status.replace('_', ' ') }}{% if f.triage_expires_on %} until {{ f.triage_expires_on.isoformat() }}{% endif %}</span>{% if f.triage_owner %}<br><span class="text-muted">owner: {{ f.triage_owner }}</span>{% endif %}{% elif f.triage_expires_on %}<br><span class="text-warning">acceptance lapsed</span>{% endif %}</td>
         {% if repo.source == 'github' %}<td class="small">{% if f.fingerprint in issue_links %}<a href="{{ issue_links[f.fingerprint].issue_url }}" rel="noopener noreferrer" target="_blank">#{{ issue_links[f.fingerprint].issue_number }}</a>{% endif %}</td>{% endif %}
       </tr>
     {% else %}

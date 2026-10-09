@@ -166,7 +166,9 @@ def _common_top_level_dir(members: list[zipfile.ZipInfo]) -> str | None:
     """GitHub-style archives wrap everything in ``repo-sha/``; strip it when *all* entries share it."""
     tops = set()
     for info in members:
-        name = info.filename.replace("\\", "/").lstrip("./")
+        name = info.filename.replace("\\", "/")
+        while name.startswith(("./", "/")):
+            name = name[1:] if name.startswith("/") else name[2:]
         if not name:
             continue
         head, sep, _ = name.partition("/")

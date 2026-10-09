@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 from flask import current_app
 
 from ..extensions import db
@@ -56,6 +58,15 @@ def delete_credential(org: Organization, cred: IntegrationCredential) -> None:
 def reveal(cred: IntegrationCredential) -> str:
     """Decrypt for immediate server-side use only. Never render, log, or return the result to a client."""
     return crypto.decrypt(cred.encrypted_secret)
+
+
+def github_clone_url(full_name: str) -> str:
+    """Clone URL on the same GitHub instance as ``GITHUB_API_URL`` (github.com, or GitHub Enterprise at
+    ``https://HOST/api/v3``), so a credential is only ever sent to the host it was issued for."""
+    host = urlsplit(current_app.config["GITHUB_API_URL"]).hostname or ""
+    if host == "api.github.com":
+        host = "github.com"
+    return f"https://{host}/{full_name}.git"
 
 
 def github_client_for_token(token: str | None) -> GitHubClient:

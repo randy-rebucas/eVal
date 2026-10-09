@@ -50,19 +50,47 @@
         <dt>Commit</dt><dd class="mono">{{ audit.commit_sha[:12] or 'n/a' }}</dd>
       </dl>
     </div></div>
-    {% if g.membership.role != 'viewer' %}
     <div class="card mb-3"><div class="card-body">
       <h2 class="h6">Triage</h2>
-      <form method="post" action="{{ url_for('findings.triage', org_slug=g.org.slug, finding_id=f.id) }}" class="d-flex gap-2">
+      {% if f.triage_status in ('accepted_risk', 'false_positive') %}
+        <div class="triage-decision small mb-3">
+          <strong>{{ f.triage_status.replace('_', ' ')|capitalize }}</strong>
+          {% if f.triage_expires_on %} · review by <strong>{{ f.triage_expires_on.isoformat() }}</strong>{% endif %}
+          {% if f.triage_owner %}<div>Owner: {{ f.triage_owner }}</div>{% endif %}
+          <div class="text-break">{{ f.triage_reason }}</div>
+          {% if f.triaged_at %}<div class="text-muted">{{ f.triaged_by.email if f.triaged_by else 'unknown user' }} · {{ f.triaged_at|dt }}</div>{% endif %}
+        </div>
+      {% elif f.triage_expires_on %}
+        <div class="alert alert-warning small py-2">
+          Reopened: the earlier decision lapsed on {{ f.triage_expires_on.isoformat() }}{% if f.triage_owner %} (owner: {{ f.triage_owner }}){% endif %}.
+          <div class="text-break">{{ f.triage_reason }}</div>
+        </div>
+      {% elif f.triage_status != 'open' %}
+        <p class="small mb-3">Marked <strong>{{ f.triage_status }}</strong>{% if f.triaged_at %} by {{ f.triaged_by.email if f.triaged_by else 'unknown user' }} · {{ f.triaged_at|dt }}{% endif %}.</p>
+      {% endif %}
+      {% if g.membership.role != 'viewer' %}
+      <form method="post" action="{{ url_for('findings.triage', org_slug=g.org.slug, finding_id=f.id) }}">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <select name="status" class="form-select form-select-sm">
+        <label class="form-label small mb-0" for="t-status">Status</label>
+        <select id="t-status" name="status" class="form-select form-select-sm mb-2">
           {% for s in triage_statuses %}<option value="{{ s }}" {% if s == f.triage_status %}selected{% endif %}>{{ s.replace('_', ' ') }}</option>{% endfor %}
         </select>
+        <label class="form-label small mb-0" for="t-reason">Reason <span class="text-muted">(required to accept or dismiss)</span></label>
+        <textarea id="t-reason" name="reason" rows="3" maxlength="4000" class="form-control form-control-sm mb-2"
+                  placeholder="e.g. Vendor library; vulnerable XML parsing is never reached. Mitigated by WAF rule 1234.">{{ f.triage_reason if f.triage_status != 'open' else '' }}</textarea>
+        <label class="form-label small mb-0" for="t-owner">Owner <span class="text-muted">(team or vendor; required for accepted risk)</span></label>
+        <input id="t-owner" name="owner" maxlength="200" class="form-control form-control-sm mb-2"
+               value="{{ f.triage_owner if f.triage_status != 'open' else '' }}" placeholder="e.g. Payments team, or Vendor: Acme Corp">
+        <label class="form-label small mb-0" for="t-expires">Review date <span class="text-muted">(required for accepted risk)</span></label>
+        <input id="t-expires" name="expires_on" type="date" class="form-control form-control-sm mb-2"
+               min="{{ (today).isoformat() }}" max="{{ max_review.isoformat() }}"
+               value="{{ f.triage_expires_on.isoformat() if f.triage_expires_on and f.triage_status != 'open' else '' }}">
         <button class="btn btn-sm btn-primary">Save</button>
       </form>
-      <p class="small text-muted mt-2 mb-0">“False positive” and “accepted risk” carry over to later audits of this repository. Scores are not changed by triage.</p>
+      <p class="small text-muted mt-2 mb-0">Accepted risks and false positives carry over to later audits of this repository
+        and reopen on their review date. Scores are not changed by triage.</p>
+      {% endif %}
     </div></div>
-    {% endif %}
     {% if repo.source == 'github' %}
     <div class="card mb-3"><div class="card-body">
       <h2 class="h6"><i class="bi bi-github"></i> GitHub issue</h2>

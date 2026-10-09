@@ -57,13 +57,21 @@ def family_of(rule_id: str) -> str | None:
     return None
 
 
+def normalize_path(path: str) -> str:
+    """Strip leading ``./`` segments only. (``lstrip("./")`` would also eat the dot of ``.github/`` or ``.env``.)"""
+    path = path.replace("\\", "/")
+    while path.startswith("./"):
+        path = path[2:]
+    return path
+
+
 def validate(findings: list[Finding], existing_files: set[str], line_counts) -> tuple[list[Finding], int]:
     """Drop findings that point outside the workspace; clamp invalid line numbers. Returns (valid, dropped)."""
     valid: list[Finding] = []
     dropped = 0
     for f in findings:
         if f.file_path:
-            path = f.file_path.replace("\\", "/").lstrip("./")
+            path = normalize_path(f.file_path)
             if path not in existing_files:
                 dropped += 1
                 continue

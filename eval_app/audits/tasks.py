@@ -48,6 +48,14 @@ def run_audit(self, audit_id: str) -> str:
     from .workspaces import prepare_workspace
 
     audit = db.session.get(Audit, uuid.UUID(audit_id))
+    if audit is not None and audit.status == "running":
+        # acks_late + reject_on_worker_lost redeliver the task when the worker process died (e.g. OOM-killed by
+        # the container limit). Don't retry a repository that may have caused that; record the failure instead
+        # of leaving the audit "running" forever.
+        _fail(audit, "The audit worker stopped unexpectedly (possibly out of memory).")
+        audit.finished_at = utcnow()
+        db.session.commit()
+        return "failed"
     if audit is None or audit.status != "queued":
         return "skipped"
     audit.status = "running"

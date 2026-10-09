@@ -1,5 +1,5 @@
-"""Fixed-window rate limiter. Uses Redis when configured, otherwise a per-process in-memory store
-(adequate for tests and single-process development only)."""
+"""Fixed-window rate limiter. Uses Redis when configured, otherwise (or while Redis is unreachable) a per-process
+in-memory store (adequate for tests and single-process development only)."""
 
 from __future__ import annotations
 
@@ -24,7 +24,8 @@ def hit(scope: str, ident: str, limit: int, window_seconds: int) -> bool:
     if url:
         import redis
 
-        client = redis.Redis.from_url(url)
+        # Short timeouts: an unreachable Redis must not stall logins (we fall back to in-process limits).
+        client = redis.Redis.from_url(url, socket_connect_timeout=0.5, socket_timeout=0.5)
         try:
             pipe = client.pipeline()
             pipe.incr(key)
@@ -32,8 +33,8 @@ def hit(scope: str, ident: str, limit: int, window_seconds: int) -> bool:
             count, _ = pipe.execute()
             return int(count) <= limit
         except redis.RedisError:
-            current_app.logger.warning("rate limiter unavailable; failing open for scope=%s", scope)
-            return True
+            # Don't fail open: an attacker able to disrupt Redis would otherwise disable login throttling.
+            current_app.logger.warning("rate limiter Redis unavailable; using in-process limits for scope=%s", scope)
     now = time.monotonic()
     with _lock:
         count, reset = _memory.get(key, (0, now + window_seconds))

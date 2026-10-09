@@ -92,7 +92,8 @@ def report(org_slug, audit_id, fmt):
     if audit.status != "succeeded":
         abort(404)
     include_triaged = request.args.get("all") == "1"
-    body = render(findings_service.report_model(audit, include_triaged=include_triaged), fmt)
+    body = render(findings_service.report_model(audit, include_triaged=include_triaged,
+                                                include_dismissed=fmt == "sarif"), fmt)
     name = re.sub(r"[^A-Za-z0-9._-]+", "-", audit.repository.name)[:60]
     ext = {"md": "md", "json": "json", "html": "html", "sarif": "sarif"}[fmt]
     resp = Response(body, mimetype=CONTENT_TYPES[fmt].split(";")[0])

@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% from "_macros.html" import severity_badge %}
+{% block title %}Risk register{% endblock %}
+{% block content %}
+<h1 class="h4">Risk register</h1>
+<p class="text-muted small">Accepted risks and false positives in the latest audit of each repository, soonest review date first.
+  Each reopens on its review date unless someone re-accepts it. Use the owner column to follow up with the owning team or vendor.</p>
+<div class="table-responsive">
+<table class="table table-sm align-middle">
+  <thead><tr>
+    <th class="w-fit">Review by</th><th class="w-fit">Severity</th><th>Finding</th><th>Repository</th><th class="w-fit">Decision</th><th>Owner</th><th>Reason</th>
+  </tr></thead>
+  <tbody>
+  {% for f, a in rows %}
+    <tr class="finding-row">
+      <td class="small text-nowrap">
+        {% if f.triage_expires_on %}
+          <span class="{{ 'text-danger fw-semibold' if f.triage_expires_on <= soon else '' }}">{{ f.triage_expires_on.isoformat() }}</span>
+          {% if f.triage_expires_on <= soon %}<div class="text-danger">due soon</div>{% endif %}
+        {% else %}<span class="text-muted">no date</span>{% endif %}
+      </td>
+      <td>{{ severity_badge(f.severity) }}</td>
+      <td><a href="{{ url_for('findings.detail', org_slug=g.org.slug, finding_id=f.id) }}">{{ f.title }}</a>
+        <div class="small text-muted mono text-break">{{ f.location }}</div></td>
+      <td class="small"><a href="{{ url_for('repos.detail', org_slug=g.org.slug, repo_id=a.repository_id) }}">{{ a.repository.name }}</a></td>
+      <td class="small">{{ f.triage_status.replace('_', ' ') }}</td>
+      <td class="small">{{ f.triage_owner or '—' }}</td>
+      <td class="small text-break">{{ f.triage_reason }}
+        {% if f.triaged_at %}<div class="text-muted">{{ f.triaged_by.email if f.triaged_by else 'unknown user' }} · {{ f.triaged_at|dt }}</div>{% endif %}</td>
+    </tr>
+  {% else %}
+    <tr><td colspan="7" class="text-muted">No accepted risks or false positives in the latest audits.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

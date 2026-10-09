@@ -6,7 +6,7 @@ import math
 import re
 
 from ..findings import Category, Confidence, FindingKind, Severity
-from ..redaction import SECRET_PATTERNS
+from ..redaction import REDACT_ONLY, SECRET_PATTERNS
 from .base import Analyzer, AnalyzerContext, is_test_path
 from .registry import register
 
@@ -15,10 +15,10 @@ TEXT_SUFFIXES = (
     ".yml", ".yaml", ".json", ".toml", ".ini", ".cfg", ".conf", ".env", ".properties", ".xml", ".tf", ".sh",
     ".bash", ".ps1", ".txt", ".md", ".dockerfile", ".gradle", ".swift", ".scala",
 )
-PROVIDER_PATTERNS = [(n, p) for n, p in SECRET_PATTERNS if n not in ("assignment", "url_credentials")]
+PROVIDER_PATTERNS = [(n, p) for n, p in SECRET_PATTERNS if n not in REDACT_ONLY | {"url_credentials"}]
 ASSIGNMENT = re.compile(
     r"""(?ix)
-    \b(?P<name>[A-Za-z_][\w.-]*?(?:password|passwd|pwd|secret|api_?key|apikey|access_?key|auth_?token|
+    (?:(?<=\\[nrt])|(?<![\w\\]))(?P<name>[A-Za-z_][\w.-]*?(?:password|passwd|pwd|secret|api_?key|apikey|access_?key|auth_?token|
        private_?key|client_?secret|token))\b
     ["']?\s*(?::=|=|:|=>)\s*
     (?P<q>["'`])(?P<value>[^"'`\s]{8,200})(?P=q)
@@ -29,6 +29,9 @@ PLACEHOLDER = re.compile(
     r"(?i)^(?:x+|\*+|\.+|<.*>|\$\{.*\}|\{\{.*\}\}|%\(.*\)s|changeme|change_me|example|placeholder|dummy|test|"
     r"your[_-]?.*|redacted|null|none|undefined|password|secret|todo|fixme|replace[_-]?me|xxx.*|sample.*)$"
 )
+# Lower-case words joined by - or _ (e.g. "hardcoded-secret", "client_credentials") are identifiers or labels,
+# not credentials.
+WORD_SLUG = re.compile(r"^[a-z]+(?:[-_][a-z]+)+$")
 ENV_FILE = re.compile(r"(^|/)\.env(\.[A-Za-z0-9_-]+)?$")
 ENV_SAFE_SUFFIX = (".example", ".sample", ".template", ".dist", ".defaults", ".test")
 
@@ -41,7 +44,7 @@ def shannon_entropy(value: str) -> float:
 
 
 def _looks_real(value: str) -> bool:
-    if PLACEHOLDER.match(value):
+    if PLACEHOLDER.match(value) or WORD_SLUG.match(value):
         return False
     if value.startswith(("http://", "https://", "/", "./", "$", "%", "{")):
         return False

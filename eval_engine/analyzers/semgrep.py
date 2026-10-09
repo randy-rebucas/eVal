@@ -39,7 +39,9 @@ class SemgrepAnalyzer(Analyzer):
         config = os.environ.get("EVAL_SEMGREP_CONFIG", "p/default")
         result = self.run_tool(
             ctx,
+            # --disable-nosem: `# nosemgrep` comments in the audited code must not suppress findings.
             ["scan", "--config", config, "--json", "--metrics", "off", "--disable-version-check", "--quiet",
+             "--disable-nosem",
              "--timeout", "30", "--max-target-bytes", "2000000", "--exclude", "node_modules", "--exclude", ".venv",
              "."],
             ok_codes=(0, 1),

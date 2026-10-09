@@ -18,7 +18,7 @@ from flask import abort, current_app, g, jsonify, request
 from ..extensions import db
 from ..models import ApiToken, Membership, Organization, User, utcnow
 from ..security import events, ratelimit
-from ..security.tenancy import role_at_least
+from ..security.tenancy import reopen_lapsed_triage, role_at_least
 
 TOKEN_PREFIX = "evl_"  # noqa: S105  # nosec B105
 REQUESTS_PER_MINUTE = 600
@@ -77,6 +77,7 @@ def api_auth(min_role: str = "viewer"):
                 return _error(403, f"This action requires the {min_role} role.")
             g.org = db.session.get(Organization, token.organization_id)
             g.membership = membership
+            reopen_lapsed_triage(g.org.id)
             g.api_token = token
             g._login_user = token.user  # current_user for this request only; no session is created
             last = token.last_used_at

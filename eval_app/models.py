@@ -7,7 +7,7 @@ filter by it (see ``eval_app.security.tenancy``). This also prepares for Postgre
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import sqlalchemy as sa
 from flask_login import UserMixin
@@ -30,6 +30,7 @@ ROLE_RANK = {r: i for i, r in enumerate(ROLES)}
 
 AUDIT_STATUSES = ("queued", "running", "succeeded", "failed", "cancelled")
 TRIAGE_STATUSES = ("open", "accepted_risk", "false_positive", "fixed")
+TRIAGE_DISMISSED = ("accepted_risk", "false_positive")  # carried over to later audits; hidden from default views
 LIFECYCLES = ("new", "existing", "recurring")
 
 
@@ -243,6 +244,7 @@ class Finding(TenantMixin, TimestampMixin, db.Model):
     __table_args__ = (
         sa.Index("ix_findings_audit_severity", "audit_id", "severity"),
         sa.Index("ix_findings_org_fingerprint", "organization_id", "fingerprint"),
+        sa.Index("ix_findings_org_triage_expiry", "organization_id", "triage_status", "triage_expires_on"),
         sa.CheckConstraint(
             "triage_status IN ('open','accepted_risk','false_positive','fixed')", name="triage_valid"
         ),
@@ -268,9 +270,19 @@ class Finding(TenantMixin, TimestampMixin, db.Model):
     references: Mapped[list] = mapped_column(sa.JSON, nullable=False, default=list)
     lifecycle: Mapped[str] = mapped_column(sa.String(16), nullable=False, default="new")
     triage_status: Mapped[str] = mapped_column(sa.String(24), nullable=False, default="open")
+    # Why the finding was accepted / dismissed, who is accountable for the fix (a team or a vendor, e.g. for
+    # third-party code), and when the decision lapses. Accepted risks always expire; the finding then reopens.
+    triage_reason: Mapped[str] = mapped_column(sa.Text, nullable=False, default="", server_default="")
+    triage_owner: Mapped[str] = mapped_column(sa.String(200), nullable=False, default="", server_default="")
+    triage_expires_on: Mapped[date | None] = mapped_column(sa.Date)
+    triaged_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    triaged_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     ai_explanation: Mapped[dict] = mapped_column(sa.JSON, nullable=False, default=dict)
 
     audit: Mapped[Audit] = relationship(back_populates="findings")
+    triaged_by: Mapped[User | None] = relationship()
 
     @property
     def location(self) -> str:

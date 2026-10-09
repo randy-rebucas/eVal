@@ -4,6 +4,7 @@ import re
 import secrets
 
 from email_validator import EmailNotValidError, validate_email
+from flask import current_app
 
 from ..extensions import db
 from ..models import Membership, Organization, User, utcnow
@@ -58,6 +59,13 @@ def create_organization(name: str, owner: User) -> Organization:
     name = name.strip()
     if not 2 <= len(name) <= 120:
         raise AuthError("Organization name must be 2–120 characters.")
+    # Each organization gets its own concurrent-audit allowance on the shared workers; cap how many one user
+    # can create so a single account cannot multiply its share.
+    limit = current_app.config.get("MAX_ORGS_PER_USER", 5)
+    owned = db.session.scalar(db.select(db.func.count(Membership.id)).where(
+        Membership.user_id == owner.id, Membership.role == "owner"))
+    if owned >= limit:
+        raise AuthError(f"You can own at most {limit} organizations.")
     org = Organization(name=name, slug=unique_org_slug(name))
     db.session.add(org)
     db.session.flush()
@@ -70,7 +78,9 @@ def register_user(email: str, password: str, name: str = "", org_name: str | Non
     email = normalize_email(email)
     validate_password(password)
     if db.session.execute(db.select(User.id).where(User.email == email)).first():
-        # Same message shape as success paths would leak; the route shows a generic message.
+        # This reveals that the address is registered. Hiding it needs email verification (the response must be
+        # identical for new and existing addresses), which is not implemented yet — see ROADMAP. Registration is
+        # rate limited per IP, which bounds enumeration.
         raise AuthError("An account with that email already exists.")
     user = User(email=email, name=name.strip()[:120])
     user.set_password(password)

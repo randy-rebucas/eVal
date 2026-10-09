@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from flask import Blueprint, abort, flash, g, redirect, render_template, request, url_for
+from datetime import timedelta
+
+from flask import Blueprint, abort, current_app, flash, g, redirect, render_template, request, url_for
 from flask_login import current_user
 
 from ..extensions import db
@@ -23,17 +25,29 @@ def detail(org_slug, finding_id):
         .order_by(Audit.created_at.desc()).limit(20)
     ).all()
     return render_template("findings/detail.html", f=finding, audit=finding.audit, issue=issue, history=history,
-                           triage_statuses=TRIAGE_STATUSES)
+                           triage_statuses=TRIAGE_STATUSES, today=services.today(),
+                           max_review=services.today() + timedelta(days=current_app.config["ACCEPTED_RISK_MAX_DAYS"]))
+
+
+@bp.get("/risks")
+@org_required()
+def risks(org_slug):
+    """Risk register: every accepted risk and false positive in the latest audits, by review date."""
+    return render_template("findings/risks.html", rows=services.risk_register(g.org), today=services.today(),
+                           soon=services.today() + timedelta(days=30))
 
 
 @bp.post("/findings/<finding_id>/triage")
 @org_required("member")
 def triage(org_slug, finding_id):
     finding = get_scoped_or_404(Finding, finding_id)
+    f = request.form
     try:
-        services.set_triage(g.org, finding, request.form.get("status", ""))
+        services.set_triage(g.org, finding, f.get("status", ""), reason=f.get("reason", ""), owner=f.get("owner", ""),
+                            expires_on=f.get("expires_on"), user_id=current_user.id)
         flash("Triage status updated.", "success")
     except services.FindingError as exc:
+        db.session.rollback()
         flash(str(exc), "danger")
     return redirect(request.form.get("next_url") if (request.form.get("next_url") or "").startswith("/o/")
                     else url_for("findings.detail", org_slug=org_slug, finding_id=finding.id))

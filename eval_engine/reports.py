@@ -41,6 +41,22 @@ def _location(f: dict) -> str:
     return f"{f['file_path']}:{f['line_start']}" if f.get("line_start") else f["file_path"]
 
 
+def _triage_text(f: dict) -> str:
+    """One-line triage decision for reports ("" when the finding is open)."""
+    t = f.get("triage") or {}
+    status = t.get("status") or f.get("triage_status") or "open"
+    if status == "open":
+        return ""
+    parts = [status.replace("_", " ")]
+    if t.get("expires_on"):
+        parts[0] += f" until {t['expires_on']}"
+    if t.get("owner"):
+        parts.append(f"owner: {t['owner']}")
+    if t.get("reason"):
+        parts.append(t["reason"])
+    return " · ".join(parts)
+
+
 def _sorted_findings(model: dict) -> list[dict]:
     rank = {s: i for i, s in enumerate(SEVERITY_ORDER)}
     return sorted(model.get("findings", []), key=lambda f: (rank.get(f["severity"], 9), f.get("category", ""),
@@ -100,6 +116,8 @@ def render_markdown(model: dict) -> str:
                   f"- **Rule:** `{f['rule_id']}` · **Sources:** {', '.join(f.get('sources', []))}"]
         if f.get("lifecycle"):
             lines.append(f"- **Status vs. previous audit:** {f['lifecycle']}")
+        if _triage_text(f):
+            lines.append(f"- **Triage:** {_md(_triage_text(f))}")
         lines += ["", _md(f.get("description", "")), ""]
         if f.get("evidence"):
             lines += ["```", f["evidence"].replace("```", "ʼʼʼ"), "```", ""]
@@ -159,6 +177,8 @@ def render_html(model: dict) -> str:
             f"{e(KIND_LABELS.get(f['kind'], f['kind']))} · confidence {e(f['confidence'])} · "
             f"<code>{e(f['rule_id'])}</code></div><p>{e(f.get('description', ''))}</p>"
         )
+        if _triage_text(f):
+            parts.append(f"<p class='note'><strong>Triage:</strong> {e(_triage_text(f))}</p>")
         if f.get("evidence"):
             parts.append(f"<pre>{e(f['evidence'])}</pre>")
         parts.append(f"<p><strong>Remediation:</strong> {e(f.get('remediation', ''))}</p></div>")
@@ -201,6 +221,11 @@ def render_sarif(model: dict) -> str:
             if region:
                 loc["region"] = region
             result["locations"] = [{"physicalLocation": loc}]
+        triage = f.get("triage") or {}
+        if triage.get("status") in ("accepted_risk", "false_positive"):
+            # Reported as suppressed (not absent), so code-scanning tools record a dismissal rather than a fix.
+            result["suppressions"] = [{"kind": "external", "status": "accepted",
+                                       "justification": _triage_text(f)[:1000]}]
         results.append(result)
     for r in rules.values():
         if not r["helpUri"]:

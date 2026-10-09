@@ -73,7 +73,9 @@ def login():
     form = LoginForm()
     if form.validate_on_submit():
         ident = f"{request.remote_addr}|{(form.email.data or '').lower()}"
-        if not ratelimit.hit("login", ident, current_app.config["LOGIN_RATE_LIMIT"], 300):
+        # Per IP+email stops guessing one account; per IP stops spraying many accounts from one address.
+        if not (ratelimit.hit("login-ip", request.remote_addr or "?", current_app.config["LOGIN_IP_RATE_LIMIT"], 300)
+                and ratelimit.hit("login", ident, current_app.config["LOGIN_RATE_LIMIT"], 300)):
             events.record("auth.login_rate_limited", email_domain=(form.email.data or "").rpartition("@")[2])
             db.session.commit()
             abort(429)

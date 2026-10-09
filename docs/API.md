@@ -83,12 +83,33 @@ Query parameters: `severity`, `category`, `kind` (`confirmed|potential|estimate|
   "category": "security", "severity": "high", "confidence": "medium", "kind": "potential",
   "description": "…", "remediation": "…", "file_path": "app.py", "line_start": 16, "line_end": 16,
   "evidence": "15 | …\n16 | …", "sources": ["bandit", "database"], "references": ["https://…"],
-  "lifecycle": "new", "triage_status": "open", "ai_explanation": {}}],
+  "lifecycle": "new", "triage_status": "open",
+  "triage": {"status": "open", "reason": "", "owner": "", "expires_on": null, "triaged_by": null,
+             "triaged_at": null, "expired": false},
+  "ai_explanation": {}}],
  "page": 1, "pages": 1, "total": 22}
 ```
+`triage.expired` is true when an earlier accepted risk / false positive lapsed on its review date and the finding
+reopened; `reason`, `owner` and `expires_on` then describe the lapsed decision.
+
+### `POST /api/v1/findings/{finding_id}/triage` (member)
+Body: `{"status": "accepted_risk", "reason": "…", "owner": "Vendor: Acme", "expires_on": "2027-03-31"}`.
+
+| status | reason | owner | expires_on |
+|---|---|---|---|
+| `accepted_risk` | required (≥ 10 chars) | required — the team or vendor that owns the fix | required, future, ≤ `EVAL_ACCEPTED_RISK_MAX_DAYS` (365) |
+| `false_positive` | required | optional | optional (same bounds) |
+| `open`, `fixed` | cleared | cleared | cleared |
+
+Returns **200** `{"finding": {…}}`, or **422** `{"error": "…"}` when a rule is not met. Decisions carry over to
+later audits of the repository and reopen on `expires_on`.
+
+### `GET /api/v1/risks`
+The risk register: accepted risks and false positives in each repository's latest audit, soonest review date
+first. Each item is a finding object plus `audit_id` and `repository_id`.
 
 ### `GET /api/v1/audits/{audit_id}/report.{fmt}`
-`fmt` ∈ `json`, `md`, `html`, `sarif`. Triaged findings are excluded unless `?all=1`. SARIF 2.1.0 is suitable for
+`fmt` ∈ `json`, `md`, `html`, `sarif`. Triaged findings are excluded unless `?all=1`; SARIF always includes accepted risks and false positives as `suppressions` (with the reason, owner and review date as justification), so code scanning records them as dismissed rather than fixed. SARIF 2.1.0 is suitable for
 GitHub code scanning (`github/codeql-action/upload-sarif`).
 
 ### `POST /api/v1/audits/{audit_id}/pr-comment` (member)
@@ -125,6 +146,7 @@ For CI, use `scripts/eval_ci.py` (standard library only) — see `docs/CI.md`.
 | GET | `/o/{org}/audits/{id}`, `…/status`, `…/compare?base=` | viewer | dashboard, progress JSON, comparison |
 | GET | `/o/{org}/audits/{id}/report.{fmt}` | viewer | exports |
 | POST | `/o/{org}/audits/{id}/cancel`, `…/issues`, `…/pr-comment` | member | cancel, GitHub issues, PR comment |
-| GET | `/o/{org}/findings/{id}`; POST `…/triage` | viewer / member | finding detail, triage |
+| GET | `/o/{org}/findings/{id}`; POST `…/triage` | viewer / member | finding detail, triage (reason, owner, review date) |
+| GET | `/o/{org}/risks` | viewer | risk register |
 | GET/POST | `/o/{org}/settings/integrations`; POST `…/integrations/{id}/delete`; POST `/o/{org}/settings/ai` | viewer / admin | credentials, AI settings |
 | GET/POST | `/o/{org}/settings/tokens`; POST `…/tokens/{id}/revoke` | viewer | personal API tokens |

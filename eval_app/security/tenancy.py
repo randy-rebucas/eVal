@@ -48,11 +48,20 @@ def org_required(min_role: str = "viewer"):
                 abort(403)
             g.org = org
             g.membership = membership
+            reopen_lapsed_triage(org.id)
             return view(*args, org_slug=org_slug, **kwargs)
 
         return wrapper
 
     return decorator
+
+
+def reopen_lapsed_triage(organization_id) -> None:
+    """Accepted risks reopen on their review date. Applied when the organization is accessed (UI or API), so
+    every view, report and CI gate sees the current state without a scheduler; one indexed count per request."""
+    from ..findings.services import reopen_expired_triage
+
+    reopen_expired_triage(organization_id)
 
 
 def require_role(min_role: str) -> None:

@@ -14,6 +14,9 @@ REDACTED = "[REDACTED]"
 # (name, pattern). Each pattern's full match is replaced; group "keep" (if present) is preserved.
 SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("private_key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)")),
+    # An excerpt can start inside a PEM block, after its BEGIN line: mask bare base64 key-body lines too.
+    ("pem_body", re.compile(r"^(?P<keep>[ \t]*(?:\d+ \| )?[ \t]*[\"']?)[A-Za-z0-9+/]{60,}={0,2}(?=[\"',]*[ \t]*$)",
+                            re.M)),
     ("aws_access_key", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
     ("github_token", re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}\b")),
     ("github_pat", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{40,}\b")),
@@ -37,6 +40,10 @@ SECRET_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 
+# Patterns that are deliberately broad: used to mask text, never as evidence that a secret was found.
+REDACT_ONLY = frozenset({"assignment", "pem_body"})
+
+
 def redact(text: str) -> str:
     if not text:
         return text
@@ -47,7 +54,7 @@ def redact(text: str) -> str:
 
 
 def contains_secret(text: str) -> bool:
-    return any(p.search(text) for _n, p in SECRET_PATTERNS if _n != "assignment") if text else False
+    return any(p.search(text) for _n, p in SECRET_PATTERNS if _n not in REDACT_ONLY) if text else False
 
 
 class RedactingFilter(logging.Filter):

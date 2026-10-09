@@ -7,7 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from eval_engine.pipeline import AuditResult, PreviousState
 
 from ..extensions import db
-from ..models import Audit, Finding, ResolvedFinding, Rule
+from ..models import TRIAGE_DISMISSED, Audit, Finding, ResolvedFinding, Rule, utcnow
 
 
 def load_previous_fingerprints(audit: Audit) -> PreviousState:
@@ -60,19 +60,24 @@ def _upsert_rules(result: AuditResult) -> None:
             pass
 
 
-def _carried_triage(audit: Audit) -> dict[str, str]:
-    """Human triage decisions (false positive / accepted risk) follow the fingerprint to later audits.
-    'fixed' is not carried: if the finding is detected again, it is open again."""
+def _carried_triage(audit: Audit) -> dict[str, dict]:
+    """Human triage decisions (false positive / accepted risk) follow the fingerprint to later audits, with their
+    reason, owner and review date. 'fixed' is not carried: if the finding is detected again, it is open again.
+    Decisions whose review date has passed are not carried; the finding comes back open."""
     if not audit.previous_audit_id:
         return {}
+    today = utcnow().date()
     rows = db.session.execute(
-        db.select(Finding.fingerprint, Finding.triage_status).where(
+        db.select(Finding).where(
             Finding.audit_id == audit.previous_audit_id,
             Finding.organization_id == audit.organization_id,
-            Finding.triage_status.in_(("false_positive", "accepted_risk")),
+            Finding.triage_status.in_(TRIAGE_DISMISSED),
+            db.or_(Finding.triage_expires_on.is_(None), Finding.triage_expires_on > today),
         )
-    ).all()
-    return {r.fingerprint: r.triage_status for r in rows}
+    ).scalars()
+    return {f.fingerprint: {"triage_status": f.triage_status, "triage_reason": f.triage_reason,
+                            "triage_owner": f.triage_owner, "triage_expires_on": f.triage_expires_on,
+                            "triaged_by_id": f.triaged_by_id, "triaged_at": f.triaged_at} for f in rows}
 
 
 def persist_result(audit: Audit, result: AuditResult) -> None:
@@ -117,8 +122,8 @@ def persist_result(audit: Audit, result: AuditResult) -> None:
             sources=f.sources,
             references=f.references[:10],
             lifecycle=f.lifecycle,
-            triage_status=carried.get(f.fingerprint, "open"),
             ai_explanation=f.ai_explanation or {},
+            **carried.get(f.fingerprint, {"triage_status": "open"}),
         )
         for f in result.findings
     )

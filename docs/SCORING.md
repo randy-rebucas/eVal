@@ -18,6 +18,11 @@ together. Scoring is deterministic: the same findings always produce the same sc
 Triage decisions (false positive, accepted risk) do **not** change scores; they only hide findings from default
 views and reports. This keeps scores comparable across audits and prevents gaming.
 
+Accepted risks need a reason, an owner (the team or vendor responsible for the fix) and a review date at most
+`EVAL_ACCEPTED_RISK_MAX_DAYS` (default 365) away; false positives need a reason. Decisions carry over to later
+audits by fingerprint. On the review date the finding reopens: it counts as open again in views, reports and
+the PR/CI gate until someone re-accepts it.
+
 ## 2. Per-finding penalty
 
 ```

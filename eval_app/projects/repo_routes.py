@@ -37,6 +37,8 @@ class RunAuditForm(FlaskForm):
 
 
 def _credential_choices():
+    if g.membership.role not in ("admin", "owner"):
+        return [("", "None (public repository)")]
     return [("", "None (public repository)")] + [
         (str(c.id), f"{c.label} (…{c.last4})") for c in org_credentials(g.org, "github")
     ]
@@ -52,9 +54,11 @@ def new(org_slug, project_id):
     if request.method == "POST":
         kind = request.form.get("kind")
         if kind == "github" and gh_form.validate_on_submit():
+            credential_id = gh_form.credential_id.data or None
+            if credential_id:
+                require_role("admin")  # binding an org credential to a repository is an admin action
             try:
-                repo = repo_service.add_github_repository(g.org, project, gh_form.full_name.data,
-                                                          gh_form.credential_id.data or None)
+                repo = repo_service.add_github_repository(g.org, project, gh_form.full_name.data, credential_id)
             except repo_service.RepositoryError as exc:
                 db.session.rollback()
                 flash(str(exc), "danger")

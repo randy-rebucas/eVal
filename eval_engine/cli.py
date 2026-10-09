@@ -57,7 +57,8 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     model = result.to_dict()
-    model["meta"] = {"title": f"eVal audit: {target.name}", "repository": str(target)}
+    name = target.resolve().name  # `target.name` is empty for "." or ".."
+    model["meta"] = {"title": f"eVal audit: {name}", "repository": str(target)}
     report = render(model, args.format)
     if args.output:
         Path(args.output).write_text(report, encoding="utf-8")

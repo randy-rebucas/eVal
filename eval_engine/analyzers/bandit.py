@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import tempfile
+from pathlib import Path
 
 from ..findings import Category, Confidence, FindingKind, Severity
 from .base import Analyzer, AnalyzerContext, AnalyzerError, is_test_path
@@ -36,8 +38,17 @@ class BanditAnalyzer(Analyzer):
     tool = "bandit"
 
     def run(self, ctx: AnalyzerContext):
-        result = self.run_tool(ctx, ["-r", ".", "-f", "json", "-q", "-x", EXCLUDE, "-s", "B101", "--exit-zero"],
-                               ok_codes=(0,))
+        # With -r, Bandit loads a repository .bandit file (skips/excludes) unless --ini names another, and it
+        # honours inline nosec suppressions. eVal's empty ini plus --ignore-nosec stop a repository hiding findings.
+        with tempfile.TemporaryDirectory(prefix="eval-bandit-") as tmp:
+            ini = Path(tmp) / "bandit.ini"
+            ini.write_text("[bandit]\n", encoding="utf-8")
+            result = self.run_tool(
+                ctx,
+                ["-r", ".", "--ini", str(ini), "--ignore-nosec", "-f", "json", "-q", "-x", EXCLUDE, "-s", "B101",
+                 "--exit-zero"],
+                ok_codes=(0,),
+            )
         try:
             data = json.loads(result.stdout or "{}")
         except json.JSONDecodeError as exc:

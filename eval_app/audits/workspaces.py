@@ -7,7 +7,7 @@ from flask import current_app
 from eval_engine.workspace import Limits, WorkspaceError, clone_repo, extract_zip, remove_tree
 
 from ..extensions import db
-from ..integrations.services import reveal
+from ..integrations.services import github_clone_url, reveal
 from ..models import Audit
 from ..projects.repositories import upload_path
 
@@ -27,7 +27,7 @@ def prepare_workspace(audit: Audit, workdir: Path, limits: Limits) -> Path:
     else:
         token = reveal(repo.credential) if repo.credential else None
         result = clone_repo(
-            f"https://github.com/{repo.full_name}.git",
+            github_clone_url(repo.full_name),
             src,
             audit.requested_ref or repo.default_branch,
             token=token,

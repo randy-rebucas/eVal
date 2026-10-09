@@ -3,9 +3,11 @@ from __future__ import annotations
 import io
 import json
 import shutil
+from datetime import timedelta
 
 import pytest
 
+from eval_app.findings.services import today
 from eval_app.models import Audit, Finding, GitHubIssueLink, IntegrationCredential, Repository
 from tests.app.helpers import make_project, upload_new, zip_bytes
 from tests.conftest import FIXTURES, register
@@ -42,9 +44,16 @@ def test_finding_detail_and_triage(audited, db):
     page = c.get(f"/o/{org}/findings/{f.id}")
     assert page.status_code == 200 and b"Recommended remediation" in page.data
     assert b"AKIAIOSFODNN7EXAMPLE" not in page.data
-    c.post(f"/o/{org}/findings/{f.id}/triage", data={"status": "accepted_risk"})
+    c.post(f"/o/{org}/findings/{f.id}/triage", data={"status": "accepted_risk"})  # no reason/owner/date
     db.session.refresh(f)
-    assert f.triage_status == "accepted_risk"
+    assert f.triage_status == "open"
+    review = (today() + timedelta(days=30)).isoformat()
+    c.post(f"/o/{org}/findings/{f.id}/triage", data={
+        "status": "accepted_risk", "reason": "Test fixture key; never deployed.", "owner": "Platform team",
+        "expires_on": review})
+    db.session.refresh(f)
+    assert (f.triage_status, f.triage_owner, f.triage_expires_on.isoformat()) == ("accepted_risk", "Platform team",
+                                                                                 review)
     default_view = c.get(f"/o/{org}/audits/{audit.id}").data.decode()
     assert "Hardcoded aws access key" not in default_view and "triaged" in default_view
     md = c.get(f"/o/{org}/audits/{audit.id}/report.md").data.decode()

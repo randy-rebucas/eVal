@@ -30,7 +30,9 @@ indicators, and categories it could not assess are shown as *not assessed*.
 - Findings with evidence, location, severity, confidence, type (confirmed / potential / estimate / AI), and
   remediation; cross-tool deduplication and stable fingerprints
 - Deterministic, documented scoring; new / existing / recurring / resolved tracking; commit comparison
-- Triage (false positive / accepted risk carry over), GitHub issue creation, HTML/Markdown/JSON/SARIF exports
+- Triage with accountability: accepted risks need a reason, an owner (team or vendor, e.g. for third-party
+  code) and a review date, carry over to later audits, and reopen when the date passes; an org-wide risk
+  register lists them by review date. GitHub issue creation, HTML/Markdown/JSON/SARIF exports
 - Pull-request audits that gate only on findings introduced in changed files; CI script and offline CLI
 - Optional AI (Anthropic Claude, OpenAI, OpenAI-compatible local models) for explanations and remediation —
   redacted inputs, validated outputs, never affects scores
@@ -74,7 +76,7 @@ Optional JS/TS tools without a global install: `npm install --prefix .tools esli
 ## Testing and linting
 
 ```bash
-pytest                                  # SQLite in-memory; ~190 tests, ~30 s
+pytest                                  # SQLite in-memory; ~210 tests, ~45 s
 TEST_DATABASE_URL=postgresql+psycopg://eval:...@127.0.0.1:55450/eval_test pytest   # against PostgreSQL
 ruff check .
 bandit -r eval_app eval_engine scripts -c pyproject.toml
@@ -95,6 +97,33 @@ issues live in `tests/fixtures/` (excluded from linting and test collection).
 4. Optional: enable AI under *Integrations → AI-assisted analysis* with an Anthropic/OpenAI key.
 5. CI: create an API token and use `scripts/eval_ci.py` (see docs/CI.md).
 
+### Dependency findings and suggested fixes
+
+eVal checks dependency manifests and lockfiles without installing packages or executing repository code.
+The built-in hygiene checks flag unpinned Python requirements, Python projects without a lockfile, JavaScript
+projects without a lockfile, VCS/URL requirements, and wildcard or non-registry JavaScript version specifiers.
+For known vulnerabilities, OSV.dev checks exact package versions collected from `requirements*.txt`,
+`poetry.lock`, `uv.lock`, and `package-lock.json`. It sends only ecosystem, package name, and version to OSV.dev;
+set `EVAL_OSV_ENABLED=0` to disable this lookup. Trivy can provide an additional filesystem scan for
+vulnerabilities when installed and enabled on the worker.
+
+Each finding includes its source file, evidence such as the affected package and pinned version, an advisory
+reference when available, and a remediation recommendation. When an advisory publishes a fixed version, the
+recommendation identifies it; otherwise it advises assessing exposure, applying mitigations, or replacing the
+package. The scanner does **not** build a runtime dependency/call graph or determine whether vulnerable code is
+reachable, so review the finding and advisory before changing versions. Keep the manifest and lockfile in sync
+when upgrading; use a trusted fixed release, then run your tests and audit again.
+
+When the dependency belongs to another team or a vendor and cannot be upgraded right away (for example a
+transitive dependency of a third-party SDK), first try pinning the fixed version yourself (npm `overrides`, pip
+constraints). If that is not possible, mark the finding **accepted risk** with the reason (and any mitigation), the
+owning team or vendor, and a review date. The decision carries over to later audits, appears in the **Risk
+register**, and the finding reopens on the review date so it cannot be forgotten.
+
+If AI-assisted analysis is enabled, it can add finding-specific remediation steps and an illustrative patch.
+These suggestions are AI-generated and must be reviewed before use. eVal never applies patches or opens a fix
+pull request automatically.
+
 Offline / without the server:
 
 ```bash
@@ -110,7 +139,11 @@ All configuration is via environment variables (`.env.example` documents each). 
 | `EVAL_SECRET_KEY` | session signing (≥ 32 chars, required) |
 | `EVAL_ENCRYPTION_KEYS` | comma-separated Fernet keys for stored credentials; first encrypts (rotation) |
 | `DATABASE_URL`, `REDIS_URL` | PostgreSQL and Redis |
-| `EVAL_GIT_ALLOWED_HOSTS` | hosts that may be cloned (default `github.com`) |
+| `EVAL_GIT_ALLOWED_HOSTS` | hosts that may be cloned (default `github.com`; add your GitHub Enterprise host) |
+| `GITHUB_API_URL` | GitHub API; for Enterprise `https://HOST/api/v3` (repositories are then cloned from `HOST`) |
+| `EVAL_PROXY_FIX_HOPS` | trusted reverse proxies in front of the app (set behind TLS termination) |
+| `EVAL_LOGIN_RATE_LIMIT`, `EVAL_LOGIN_IP_RATE_LIMIT`, `EVAL_MAX_ORGS_PER_USER` | abuse limits |
+| `EVAL_ACCEPTED_RISK_MAX_DAYS` | longest an accepted risk lasts before it reopens (default 365) |
 | `EVAL_WORKSPACE_MAX_*`, `EVAL_MAX_UPLOAD_MB`, `EVAL_ANALYZER_TIMEOUT_SECONDS` | resource limits |
 | `EVAL_OSV_ENABLED` | dependency vulnerability lookup via OSV.dev (sends package names/versions only) |
 | `EVAL_SEMGREP_CONFIG` | Semgrep rules (registry pack or local path for air-gapped installs) |
@@ -120,7 +153,7 @@ All configuration is via environment variables (`.env.example` documents each). 
 
 ## Deployment notes
 
-- Run behind TLS; keep `EVAL_SECURE_COOKIES=true`. Put the worker on a separate host/node pool from the web tier
+- Run behind TLS; keep `EVAL_SECURE_COOKIES=true` and set `EVAL_PROXY_FIX_HOPS` to the number of proxies. Put the worker on a separate host/node pool from the web tier
   where possible, ideally under gVisor/Kata (see docs/SECURITY.md).
 - Back up PostgreSQL and the `/data` volume (uploads). Rotate `EVAL_ENCRYPTION_KEYS` by prepending a new key.
 - Scale workers horizontally (`docker compose up --scale worker=N`); each handles `--concurrency` audits.

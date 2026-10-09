@@ -42,7 +42,7 @@ COPY migrations ./migrations
 COPY wsgi.py ./
 
 RUN useradd --create-home --uid 10001 eval \
- && mkdir -p /data /work && chown eval:eval /data /work
+ && mkdir -p /data /work /trivy-cache && chown eval:eval /data /work /trivy-cache
 USER eval
 
 ENV EVAL_DATA_DIR=/data \

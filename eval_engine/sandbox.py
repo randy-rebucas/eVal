@@ -6,7 +6,9 @@ Controls applied to every invocation:
 * scrubbed environment (no application secrets, isolated HOME/TMP);
 * wall-clock timeout that kills the whole process group;
 * stdout/stderr captured to temp files and truncated to a cap (no unbounded memory use);
-* on POSIX, ``setrlimit`` for CPU seconds, address space, written file size, open files, and processes.
+* on POSIX, ``setrlimit`` for CPU seconds, address space (except tools that opt out), written file size, open
+  files, and core dumps. Process count is bounded by the container's PID limit (RLIMIT_NPROC is per-user and
+  would count the worker's own processes).
 
 Container-level isolation (read-only rootfs, dropped capabilities, no-new-privileges, memory/PID limits)
 is configured in docker-compose for the worker and complements these process-level controls.

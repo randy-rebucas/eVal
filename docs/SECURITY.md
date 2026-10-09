@@ -10,6 +10,7 @@ with pointers to the code and tests that enforce them. Known gaps are listed at 
 |---|---|---|
 | Code execution from the repo | Repository code is never imported, built, installed or run. Built-in analyzers parse with `ast`/regex. | `eval_engine/analyzers/*` |
 | Code execution via tool config | Tools that load executable config are run with eVal's own config: mypy `--config-file` (plugins would be imported), ESLint `--config` from a temp dir (`eslint.config.js` is JS), Ruff `--isolated`. Proven by tests that plant a payload and assert it never runs. | `analyzers/mypy_.py`, `eslint.py`, `ruff.py`; `tests/engine/test_analyzers.py::test_mypy_ignores_repo_plugins`, `::test_eslint_never_loads_repo_config` |
+| Repository steering the tools | Repository-supplied tool settings and inline suppressions are ignored: Trivy runs with eVal's own empty `--config` and `--ignorefile` (it otherwise reads `./trivy.yaml` and `./.trivyignore`, which could hide results, redirect output, or point the worker at another server); Bandit gets an empty `--ini` (ignores `.bandit`) and `--ignore-nosec`; Semgrep `--disable-nosem`; Ruff `--ignore-noqa`; ESLint `noInlineConfig`. | `analyzers/trivy.py`, `bandit.py`, `semgrep.py`, `ruff.py`; `tests/engine/test_hardening.py` |
 | Path traversal / zip slip | Member names normalised; absolute paths, drive letters, `..` and over-deep paths rejected; every write goes through `safe_join`. | `workspace.extract_zip`, `validate_relative_path` |
 | Symlink attacks | Symlink members skipped; traversal never follows symlinks; git checkout uses `core.symlinks=false`. | `workspace` |
 | Zip bombs / resource exhaustion | Per-file, total and file-count limits enforced while streaming (headers are not trusted); compression-ratio limit; encrypted members rejected. | `workspace.Limits` |
@@ -17,11 +18,15 @@ with pointers to the code and tests that enforce them. Known gaps are listed at 
 | Command injection | Subprocesses use argv lists, never a shell, with an allow-listed executable resolved to an absolute path. | `eval_engine/sandbox.py` |
 | Runaway tools | Wall-clock timeout kills the process tree; output captured to temp files with a cap; POSIX `RLIMIT_CPU/AS/FSIZE/NOFILE/CORE`; Celery soft/hard task limits. | `sandbox.run`, `celery_app.py` |
 | Secret leakage via env | Tools run with a scrubbed environment (no `DATABASE_URL`, `EVAL_*`, keys). | `sandbox._scrubbed_env`; test `test_environment_is_scrubbed` |
-| Hostile analyzer output | Findings must reference files inside the workspace; line numbers are bounds-checked; everything rendered is HTML-escaped (Jinja autoescape, `html.escape` in reports, Markdown escaping). | `dedupe.validate`, `reports.py`; test `test_untrusted_content_is_escaped_everywhere` |
+| Hostile analyzer output | Findings must reference files inside the workspace (paths are normalised without dropping leading dots, so `.github/` and `.env` findings are kept); line numbers are bounds-checked; everything rendered is HTML-escaped (Jinja autoescape, `html.escape` in reports, Markdown escaping). | `dedupe.validate`, `reports.py`; test `test_untrusted_content_is_escaped_everywhere` |
 
 **Container isolation (production).** The worker container in `docker-compose.yml` runs as an unprivileged user
 with a read-only root filesystem, `tmpfs` work dirs, all capabilities dropped, `no-new-privileges`, and memory,
-CPU and PID limits. For stronger isolation run the worker under gVisor/Kata or a dedicated node pool with no
+CPU and PID limits. The worker process marks itself non-dumpable (`prctl(PR_SET_DUMPABLE, 0)`), so analyzer
+tools — which run as the same user — cannot read its `/proc/<pid>/environ` (database URL, encryption keys) or
+memory. It mounts the data volume read-only, so tools cannot alter stored uploads; the Trivy cache has its own
+volume. Audits whose worker died (redelivered task) are marked failed rather than retried, and audits stuck past
+Celery's hard time limit are expired so they stop counting against the organization's limit. For stronger isolation run the worker under gVisor/Kata or a dedicated node pool with no
 access to the database network other than what it needs (see Known gaps).
 
 ## 2. Secrets
@@ -43,7 +48,8 @@ access to the database network other than what it needs (see Known gaps).
   `get_scoped_or_404`/`scoped_select`, which filter by the caller's organization. IDs from another tenant return
   **404**, not 403, so existence is not revealed.
 * Roles: `viewer < member < admin < owner`. Viewers read; members create audits, triage, create issues; admins
-  manage members, credentials, AI settings and delete resources; only owners grant/revoke owner, and the last
+  manage members, credentials (including which repository uses which credential, also at connection time), AI
+  settings and delete resources; only owners grant/revoke owner, and the last
   owner cannot be removed or demoted.
 * API tokens act with the user's **current** membership role, checked on every request; removing the member
   disables their tokens immediately.
@@ -57,8 +63,11 @@ access to the database network other than what it needs (see Known gaps).
 
 CSRF protection on all forms (Flask-WTF); the bearer-token API is CSRF-exempt and does not accept session
 cookies. Session cookies are `HttpOnly`, `SameSite=Lax`, `Secure` outside local development; the session is
-cleared on login (fixation). Login and registration are rate limited. Security headers: strict CSP (no inline
-scripts or style attributes), `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy`, HSTS when secure cookies
+cleared on login (fixation). Login is rate limited per IP+email and per IP; registration per IP. If Redis is
+unreachable the limiter falls back to in-process counters instead of failing open. Behind a reverse proxy set
+`EVAL_PROXY_FIX_HOPS` so limits apply to real client addresses. Each user may own at most `EVAL_MAX_ORGS_PER_USER`
+organizations, bounding one account's share of the shared workers. Security headers: strict CSP (no inline
+scripts or style attributes; CDN sources pinned to the exact package versions loaded with SRI), `X-Frame-Options: DENY`, `nosniff`, `Referrer-Policy`, HSTS when secure cookies
 are on. Open redirects are blocked on login. Production refuses to start without strong secrets. A security audit
 log (`audit_events`) records logins, membership, credential, AI-settings, export, and issue-creation actions
 without secrets.
@@ -92,6 +101,13 @@ eVal never modifies audited code. GitHub issues and PR comments are created only
 * Semgrep and Trivy run without `RLIMIT_AS` (their runtimes mmap/reserve large address ranges and fail under
   it); their memory is bounded only by the worker container's cgroup limit.
 * Semgrep honours a repository's `.semgrepignore`, which a hostile repository could use to hide files.
+* `tsc` reads the repository's `tsconfig.json` (that is what it checks). Compiler options such as
+  `generateTrace` can make it write files inside the worker's writable scratch space; the CLI never loads
+  language-service plugins.
+* Analyzer tools run as the worker's user, so a compromised tool can still read other tenants' uploads on the
+  (read-only) data volume while it runs. Per-audit sandboxes (gVisor, or a separate uid with only that audit's
+  source) would close this.
+* Registration reveals whether an email is already registered; hiding it requires email verification.
 * Git transfer size cannot be capped before download; limits are enforced after checkout plus the GitHub-reported
   repository size check at connection time.
 * The in-memory rate limiter fallback is per-process; configure `REDIS_URL` in production.

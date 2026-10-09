@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
+from pathlib import Path
 
 from ..findings import Category, Confidence, FindingKind, Severity
 from .base import Analyzer, AnalyzerContext, AnalyzerError
@@ -31,12 +33,21 @@ class TrivyAnalyzer(Analyzer):
     address_space_limit = None  # Trivy mmaps its vulnerability DB; RLIMIT_AS makes that fail
 
     def run(self, ctx: AnalyzerContext):
-        args = ["fs", "--scanners", "vuln,misconfig,secret", "--format", "json", "--quiet", "--exit-code", "0",
-                "--skip-dirs", "node_modules", "--skip-dirs", ".venv", "--timeout", f"{max(ctx.timeout - 10, 30)}s"]
-        cache = os.environ.get("EVAL_TRIVY_CACHE_DIR")
-        if cache:
-            args += ["--cache-dir", cache]
-        result = self.run_tool(ctx, [*args, "."], ok_codes=(0,))
+        # Trivy reads ./trivy.yaml and ./.trivyignore from its working directory (the repository) by default.
+        # Point both at eVal's own empty files so a repository cannot hide results, redirect output, or point
+        # the worker at another server or database.
+        with tempfile.TemporaryDirectory(prefix="eval-trivy-") as tmp:
+            config, ignore = Path(tmp) / "trivy.yaml", Path(tmp) / "trivyignore"
+            config.write_text("{}\n", encoding="utf-8")
+            ignore.write_text("", encoding="utf-8")
+            args = ["fs", "--config", str(config), "--ignorefile", str(ignore),
+                    "--scanners", "vuln,misconfig,secret", "--format", "json", "--quiet", "--exit-code", "0",
+                    "--skip-dirs", "node_modules", "--skip-dirs", ".venv",
+                    "--timeout", f"{max(ctx.timeout - 10, 30)}s"]
+            cache = os.environ.get("EVAL_TRIVY_CACHE_DIR")
+            if cache:
+                args += ["--cache-dir", cache]
+            result = self.run_tool(ctx, [*args, "."], ok_codes=(0,))
         return self.parse(ctx, result.stdout)
 
     def parse(self, ctx: AnalyzerContext, stdout: str):
