@@ -48,7 +48,19 @@ def fake_github(monkeypatch):
             issues.append(kwargs.get("json"))
             n = len(issues)
             return {"number": n, "html_url": f"https://github.com/octo/shop/issues/{n}"}
+        if path == "/repos/octo/shop/pulls/5":
+            return {"number": 5, "state": pull_state["state"], "title": "Add export",
+                    "head": {"sha": "d" * 40, "ref": "feature/export"}, "base": {"ref": "main"}}
+        if path == "/repos/octo/shop/pulls/5/files":
+            page = kwargs.get("params", {}).get("page", 1)
+            return [{"filename": "export.py", "status": "added"}, {"filename": "gone.py", "status": "removed"}] \
+                if page == 1 else []
+        if path == "/repos/octo/shop/issues/5/comments" and method == "POST":
+            comments.append(kwargs["json"]["body"])
+            return {"html_url": "https://github.com/octo/shop/pull/5#issuecomment-1"}
         raise AssertionError(path)
 
+    comments: list[str] = []
+    pull_state = {"state": "open"}
     monkeypatch.setattr(GitHubClient, "_request", fake_request)
-    return {"calls": calls, "issues": issues}
+    return {"calls": calls, "issues": issues, "comments": comments, "pull_state": pull_state}

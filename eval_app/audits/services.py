@@ -14,19 +14,50 @@ class AuditError(Exception):
     pass
 
 
-def previous_successful(repo: Repository, before: Audit | None = None) -> Audit | None:
+def previous_successful(repo: Repository, before: Audit | None = None, branch: str | None = None) -> Audit | None:
+    """Latest successful audit used as the lifecycle baseline.
+
+    For GitHub repositories the baseline is the same branch (or, for PR audits, the PR's base branch), falling
+    back to any branch when that branch has never been audited. PR audits never serve as a baseline."""
     q = db.select(Audit).where(
         Audit.repository_id == repo.id,
         Audit.organization_id == repo.organization_id,
         Audit.status == "succeeded",
+        Audit.pr_number.is_(None),
     )
     if before is not None:
         q = q.where(Audit.id != before.id, Audit.created_at <= before.created_at)
-    return db.session.execute(q.order_by(Audit.created_at.desc()).limit(1)).scalar_one_or_none()
+    q = q.order_by(Audit.created_at.desc()).limit(1)
+    if branch:
+        same = db.session.execute(q.where(Audit.branch == branch)).scalar_one_or_none()
+        if same is not None:
+            return same
+    return db.session.execute(q).scalar_one_or_none()
+
+
+def create_pr_audit(org: Organization, repo: Repository, user_id, number: int, *, trigger: str = "api") -> Audit:
+    """Audit a pull request's head commit; findings are compared with the base branch's latest audit."""
+    from ..integrations.github import GitHubError
+    from ..integrations.services import github_client
+
+    if repo.source != "github":
+        raise AuditError("Pull request audits require a GitHub repository.")
+    try:
+        client = github_client(repo.credential)
+        pull = client.get_pull(repo.full_name, number)
+        changed = client.list_pull_files(repo.full_name, number)
+    except GitHubError as exc:
+        raise AuditError(str(exc)) from exc
+    if pull["state"] != "open":
+        raise AuditError(f"Pull request #{number} is {pull['state']}.")
+    return create_audit(org, repo, user_id, ref=pull["head_sha"], trigger=trigger,
+                        pr={"number": pull["number"], "base_ref": pull["base_ref"], "head_ref": pull["head_ref"],
+                            "changed_files": changed})
 
 
 def create_audit(
-    org: Organization, repo: Repository, user_id, *, ref: str = "", upload: Upload | None = None
+    org: Organization, repo: Repository, user_id, *, ref: str = "", upload: Upload | None = None,
+    trigger: str = "ui", pr: dict | None = None,
 ) -> Audit:
     from eval_engine.workspace import WorkspaceError, validate_ref
 
@@ -51,20 +82,31 @@ def create_audit(
             raise AuditError("Upload does not belong to this repository.")
         ref = ""
 
+    branch = ref if repo.source == "github" else ""
+    baseline_branch = branch
+    if pr:
+        branch = pr.get("head_ref") or ref
+        baseline_branch = pr["base_ref"]
+    prev = previous_successful(repo, branch=baseline_branch or None)
     audit = Audit(
         organization_id=org.id,
         repository_id=repo.id,
         upload_id=upload.id if upload else None,
         requested_by_id=user_id,
         requested_ref=ref,
-        branch=ref if repo.source == "github" else "",
-        previous_audit_id=(prev.id if (prev := previous_successful(repo)) else None),
+        branch=branch[:255],
+        trigger=trigger if trigger in ("ui", "api", "pull_request") else "ui",
+        pr_number=pr["number"] if pr else None,
+        pr_base_ref=(pr["base_ref"] if pr else "")[:255],
+        changed_files=list(pr["changed_files"])[:3000] if pr else [],
+        previous_audit_id=prev.id if prev else None,
         status="queued",
         stage="queued",
     )
     db.session.add(audit)
     db.session.flush()
-    events.record("audit.requested", organization_id=org.id, target=audit, ref=ref or None)
+    events.record("audit.requested", organization_id=org.id, target=audit, ref=ref or None,
+                  pr=pr["number"] if pr else None, trigger=trigger)
     db.session.commit()
     enqueue(audit)
     return audit

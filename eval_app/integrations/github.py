@@ -107,6 +107,39 @@ class GitHubClient:
             )
         return out
 
+    def get_pull(self, full_name: str, number: int) -> dict:
+        full_name = validate_full_name(full_name)
+        d = self._request("GET", f"/repos/{full_name}/pulls/{int(number)}")
+        return {
+            "number": d["number"],
+            "head_sha": d["head"]["sha"],
+            "head_ref": d["head"].get("ref", ""),
+            "base_ref": d["base"].get("ref", ""),
+            "state": d.get("state", ""),
+            "title": d.get("title", ""),
+        }
+
+    def list_pull_files(self, full_name: str, number: int, limit: int = 3000) -> list[str]:
+        """Changed file paths (GitHub caps this listing at 3000 files)."""
+        full_name = validate_full_name(full_name)
+        files: list[str] = []
+        page = 1
+        while len(files) < limit:
+            data = self._request("GET", f"/repos/{full_name}/pulls/{int(number)}/files",
+                                 params={"per_page": 100, "page": page})
+            if not data:
+                break
+            files.extend(f["filename"] for f in data if f.get("status") != "removed")
+            if len(data) < 100:
+                break
+            page += 1
+        return files[:limit]
+
+    def create_issue_comment(self, full_name: str, number: int, body: str) -> dict:
+        full_name = validate_full_name(full_name)
+        d = self._request("POST", f"/repos/{full_name}/issues/{int(number)}/comments", json={"body": body[:65000]})
+        return {"html_url": d.get("html_url", "")}
+
     def create_issue(self, full_name: str, title: str, body: str, labels: list[str] | None = None) -> dict:
         full_name = validate_full_name(full_name)
         payload = {"title": title[:256], "body": body[:65000]}

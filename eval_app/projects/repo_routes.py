@@ -7,7 +7,7 @@ from flask_wtf.file import FileField, FileRequired
 from wtforms import SelectField, StringField
 from wtforms.validators import DataRequired, Length
 
-from ..audits.services import AuditError, create_audit
+from ..audits.services import AuditError, create_audit, create_pr_audit
 from ..extensions import db
 from ..integrations.github import GitHubError
 from ..integrations.services import github_client, org_credentials
@@ -114,6 +114,23 @@ def run(org_slug, repo_id):
             audit = create_audit(g.org, repo, current_user.id, upload=upload)
         else:
             audit = create_audit(g.org, repo, current_user.id, ref=form.ref.data or repo.default_branch)
+    except AuditError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+        return redirect(url_for("repos.detail", org_slug=org_slug, repo_id=repo.id))
+    return redirect(url_for("audits.detail", org_slug=org_slug, audit_id=audit.id))
+
+
+@bp.post("/repos/<repo_id>/pulls")
+@org_required("member")
+def run_pr(org_slug, repo_id):
+    repo = get_scoped_or_404(Repository, repo_id)
+    number = request.form.get("number", type=int)
+    if not number or number < 1:
+        flash("Enter a pull request number.", "danger")
+        return redirect(url_for("repos.detail", org_slug=org_slug, repo_id=repo.id))
+    try:
+        audit = create_pr_audit(g.org, repo, current_user.id, number, trigger="pull_request")
     except AuditError as exc:
         db.session.rollback()
         flash(str(exc), "danger")

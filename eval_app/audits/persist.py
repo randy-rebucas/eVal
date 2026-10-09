@@ -30,6 +30,7 @@ def load_previous_fingerprints(audit: Audit) -> PreviousState:
             Audit.repository_id == audit.repository_id,
             Audit.organization_id == audit.organization_id,
             Audit.status == "succeeded",
+            Audit.pr_number.is_(None),
             Audit.id != audit.id,
             Audit.created_at <= audit.created_at,
         )

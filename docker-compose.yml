@@ -8,7 +8,11 @@ x-app: &app
   environment:
     DATABASE_URL: postgresql+psycopg://eval:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/eval
     REDIS_URL: redis://redis:6379/0
+    EVAL_ENV: production
     EVAL_DATA_DIR: /data
+    EVAL_WORK_DIR: /work
+    EVAL_TRIVY_CACHE_DIR: /data/trivy-cache
+    # For plain-http local use set EVAL_SECURE_COOKIES=false in .env; keep true behind TLS.
   volumes:
     - eval-data:/data
   depends_on:

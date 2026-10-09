@@ -42,6 +42,7 @@ def detail(org_slug, audit_id):
             history=_history(audit),
             severity_order=SEVERITY_ORDER,
             triaged_count=sum(1 for f in audit.findings if f.triage_status != "open"),
+            pr=findings_service.pr_summary(audit) if audit.pr_number else None,
         )
     return render_template("audits/detail.html", **ctx)
 
@@ -63,6 +64,21 @@ def cancel(org_slug, audit_id):
         flash("Audit cancelled.", "success")
     except services.AuditError as exc:
         db.session.rollback()
+        flash(str(exc), "danger")
+    return redirect(url_for("audits.detail", org_slug=org_slug, audit_id=audit.id))
+
+
+@bp.post("/<audit_id>/pr-comment")
+@org_required("member")
+def pr_comment(org_slug, audit_id):
+    audit = get_scoped_or_404(Audit, audit_id)
+    if audit.status != "succeeded":
+        abort(404)
+    try:
+        url = findings_service.post_pr_comment(
+            g.org, audit, url_for("audits.detail", org_slug=org_slug, audit_id=audit.id, _external=True))
+        flash(f"Posted a summary comment on PR #{audit.pr_number}: {url}", "success")
+    except findings_service.FindingError as exc:
         flash(str(exc), "danger")
     return redirect(url_for("audits.detail", org_slug=org_slug, audit_id=audit.id))
 

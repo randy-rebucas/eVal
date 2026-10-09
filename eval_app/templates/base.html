@@ -24,6 +24,7 @@
         {% block extra_nav %}{% endblock %}
         <li class="nav-item"><a class="nav-link" href="{{ url_for('orgs.members', org_slug=g.org.slug) }}">Members</a></li>
         <li class="nav-item"><a class="nav-link" href="{{ url_for('integrations.index', org_slug=g.org.slug) }}">Integrations</a></li>
+        <li class="nav-item"><a class="nav-link" href="{{ url_for('integrations.tokens', org_slug=g.org.slug) }}">API tokens</a></li>
       </ul>
       {% else %}<div class="me-auto"></div>{% endif %}
       <span class="navbar-text me-3 small">

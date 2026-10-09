@@ -7,13 +7,16 @@ import os
 
 from flask import Flask, jsonify, render_template, request
 
-from . import config as config_module
 from .extensions import csrf, db, login_manager, migrate
 
 __version__ = "0.1.0"
 
 
 def create_app(config_name: str | None = None, overrides: dict | None = None) -> Flask:
+    # Imported here, not at module level: config classes read os.environ when first imported, and entry points
+    # (wsgi.py, celery_worker.py) load a local .env before calling create_app().
+    from . import config as config_module
+
     app = Flask(__name__)
     name = config_name or os.environ.get("EVAL_ENV", "production")
     app.config.from_object(config_module.CONFIGS[name])
@@ -25,7 +28,7 @@ def create_app(config_name: str | None = None, overrides: dict | None = None) ->
     _configure_logging(app)
 
     db.init_app(app)
-    migrate.init_app(app, db, directory=os.path.join(os.path.dirname(__file__), "..", "migrations"))
+    migrate.init_app(app, db, directory=_migrations_dir())
     csrf.init_app(app)
     login_manager.init_app(app)
     login_manager.login_view = "auth.login"
@@ -53,6 +56,11 @@ def create_app(config_name: str | None = None, overrides: dict | None = None) ->
     for bp in (auth_bp, orgs_bp, projects_bp, repos_bp, audits_bp, findings_bp, integrations_bp):
         app.register_blueprint(bp)
 
+    from .api.routes import bp as api_bp
+
+    app.register_blueprint(api_bp)
+    csrf.exempt(api_bp)  # bearer-token API: no ambient cookie credentials, so CSRF does not apply
+
     from .celery_app import init_celery
 
     init_celery(app)
@@ -61,6 +69,18 @@ def create_app(config_name: str | None = None, overrides: dict | None = None) ->
     _register_template_helpers(app)
     _register_cli(app)
     return app
+
+
+def _migrations_dir() -> str:
+    """Source checkout: <repo>/migrations. Installed package (Docker): ./migrations in the working directory.
+    EVAL_MIGRATIONS_DIR overrides both."""
+    explicit = os.environ.get("EVAL_MIGRATIONS_DIR")
+    if explicit:
+        return explicit
+    beside_package = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "migrations"))
+    if os.path.isdir(beside_package):
+        return beside_package
+    return os.path.abspath("migrations")
 
 
 def _configure_logging(app: Flask) -> None:

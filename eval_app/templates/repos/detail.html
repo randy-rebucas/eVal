@@ -40,6 +40,13 @@
           </select>
           <button class="btn btn-primary btn-sm"><i class="bi bi-play-fill"></i> Run audit</button>
         </form>
+        <hr>
+        <form method="post" action="{{ url_for('repos.run_pr', org_slug=g.org.slug, repo_id=repo.id) }}" class="d-flex gap-2 align-items-end">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div><label class="form-label small mb-0">Audit pull request #</label><input type="number" min="1" name="number" class="form-control form-control-sm" required></div>
+          <button class="btn btn-outline-primary btn-sm"><i class="bi bi-git"></i> Audit PR</button>
+        </form>
+        <div class="form-text">Findings in changed files are compared with the latest audit of the PR's base branch.</div>
       {% else %}
         {% if latest_upload %}
         <p class="small mb-2">Latest upload: <span class="mono">{{ latest_upload.original_filename }}</span>, {{ (latest_upload.size_bytes / 1024)|round(1) }} KB, sha256 <span class="mono">{{ latest_upload.sha256[:12] }}</span></p>
@@ -79,7 +86,7 @@
       {% for a in audits %}
         <tr>
           <td><a href="{{ url_for('audits.detail', org_slug=g.org.slug, audit_id=a.id) }}">{{ a.created_at|dt }}</a></td>
-          <td class="mono small">{{ a.branch or 'upload' }} {{ a.commit_sha[:8] }}</td>
+          <td class="mono small">{% if a.pr_number %}<span class="badge text-bg-info">PR #{{ a.pr_number }}</span> {% endif %}{{ a.branch or 'upload' }} {{ a.commit_sha[:8] }}</td>
           <td>{{ status_badge(a.status) }}</td>
           <td>{{ a.overall_score|score }}</td>
           <td>{{ risk_badge(a.risk_level) }}</td>

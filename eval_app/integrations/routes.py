@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from flask import Blueprint, flash, g, redirect, render_template, request, url_for
+from flask import Blueprint, abort, flash, g, make_response, redirect, render_template, request, url_for
 from flask_login import current_user
 from flask_wtf import FlaskForm
 from wtforms import PasswordField, SelectField, StringField
@@ -9,8 +9,9 @@ from wtforms.validators import DataRequired, Length
 from eval_engine.ai import PROVIDERS
 
 from .. import ai_config
+from ..api.auth import create_token, revoke_token
 from ..extensions import db
-from ..models import IntegrationCredential
+from ..models import ApiToken, IntegrationCredential
 from ..security.tenancy import get_scoped_or_404, org_required
 from . import services
 
@@ -62,6 +63,33 @@ def save_ai(org_slug):
         db.session.rollback()
         flash(str(exc), "danger")
     return redirect(url_for("integrations.index", org_slug=org_slug))
+
+
+@bp.route("/tokens", methods=["GET", "POST"])
+@org_required("viewer")
+def tokens(org_slug):
+    new_token = None
+    if request.method == "POST":
+        _, new_token = create_token(g.org, current_user, request.form.get("name", ""))
+    mine = db.session.execute(
+        db.select(ApiToken).where(ApiToken.organization_id == g.org.id, ApiToken.user_id == current_user.id)
+        .order_by(ApiToken.created_at.desc())
+    ).scalars().all()
+    # The plaintext token is rendered once in this response and never stored or flashed into the session.
+    resp = make_response(render_template("integrations/tokens.html", tokens=mine, new_token=new_token))
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@bp.post("/tokens/<token_id>/revoke")
+@org_required("viewer")
+def revoke(org_slug, token_id):
+    token = get_scoped_or_404(ApiToken, token_id)
+    if token.user_id != current_user.id and g.membership.role not in ("admin", "owner"):
+        abort(404)
+    revoke_token(g.org, token)
+    flash("Token revoked.", "success")
+    return redirect(url_for("integrations.tokens", org_slug=org_slug))
 
 
 @bp.post("/integrations/<cred_id>/delete")

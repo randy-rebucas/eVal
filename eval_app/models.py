@@ -190,6 +190,10 @@ class Audit(TenantMixin, TimestampMixin, db.Model):
     branch: Mapped[str] = mapped_column(sa.String(255), nullable=False, default="")
     commit_sha: Mapped[str] = mapped_column(sa.String(64), nullable=False, default="")
     requested_ref: Mapped[str] = mapped_column(sa.String(255), nullable=False, default="")
+    trigger: Mapped[str] = mapped_column(sa.String(16), nullable=False, default="ui")  # ui | api | pull_request
+    pr_number: Mapped[int | None] = mapped_column(sa.Integer)
+    pr_base_ref: Mapped[str] = mapped_column(sa.String(255), nullable=False, default="")
+    changed_files: Mapped[list] = mapped_column(sa.JSON, nullable=False, default=list)
 
     status: Mapped[str] = mapped_column(sa.String(16), nullable=False, default="queued", index=True)
     stage: Mapped[str] = mapped_column(sa.String(64), nullable=False, default="queued")

@@ -23,6 +23,7 @@ dependencies = [
   "cryptography>=42",
   "requests>=2.32,<3",
   "email-validator>=2.1",
+  "python-dotenv>=1.0",
   "gunicorn>=22; platform_system != 'Windows'",
 ]
 

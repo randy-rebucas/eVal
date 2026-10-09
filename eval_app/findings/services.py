@@ -125,6 +125,66 @@ def report_model(audit: Audit, include_triaged: bool = False) -> dict:
     }
 
 
+# ------------------------------------------------------------------------------------------ pull requests
+def pr_introduced(audit: Audit) -> list[Finding]:
+    """Scored, open findings in files the PR changed that the base-branch baseline did not have."""
+    changed = set(audit.changed_files or [])
+    out = [f for f in audit.findings
+           if f.kind != "ai_observation" and f.triage_status == "open" and f.lifecycle in ("new", "recurring")
+           and f.file_path in changed]
+    rank = {s: i for i, s in enumerate(SEVERITY_ORDER)}
+    return sorted(out, key=lambda f: (rank.get(f.severity, 9), f.file_path, f.line_start or 0))
+
+
+def pr_summary(audit: Audit) -> dict:
+    introduced = pr_introduced(audit)
+    counts = dict.fromkeys(SEVERITY_ORDER, 0)
+    for f in introduced:
+        counts[f.severity] += 1
+    return {"pr_number": audit.pr_number, "base_ref": audit.pr_base_ref, "changed_files": len(audit.changed_files),
+            "baseline_audit_id": str(audit.previous_audit_id) if audit.previous_audit_id else None,
+            "introduced_counts": counts, "introduced": [finding_to_dict(f) for f in introduced[:200]]}
+
+
+def pr_comment_body(audit: Audit, link: str) -> str:
+    s = pr_summary(audit)
+    counts = s["introduced_counts"]
+    total = sum(counts.values())
+    score = audit.overall_score if audit.overall_score is not None else "n/a"
+    lines = [f"### eVal audit of this pull request — {audit.risk_level or 'n/a'} overall risk",
+             f"Overall score **{score}**."]
+    if audit.previous_audit_id:
+        lines.append(f"Compared with the latest audit of `{audit.pr_base_ref}`.")
+    else:
+        lines.append(f"No baseline audit of `{audit.pr_base_ref}` exists yet; all findings in changed files count "
+                     "as new.")
+    lines.append("")
+    if total:
+        breakdown = ", ".join(f"{k}: {v}" for k, v in counts.items() if v)
+        lines.append(f"**{total} finding(s) introduced in changed files:** {breakdown}")
+    else:
+        lines.append("**No new findings in changed files.**")
+    lines.append("")
+    for f in pr_introduced(audit)[:15]:
+        lines.append(f"- **{f.severity.upper()}** {f.title} — `{f.location}`")
+    lines += ["", f"[Full report]({link}) · automated static analysis; scores are risk indicators, not guarantees."]
+    return redact("\n".join(lines))
+
+
+def post_pr_comment(org: Organization, audit: Audit, link: str) -> str:
+    repo = audit.repository
+    if not audit.pr_number or repo.source != "github" or repo.credential is None:
+        raise FindingError("PR comments need a GitHub pull request audit and a repository credential.")
+    try:
+        result = github_client(repo.credential).create_issue_comment(repo.full_name, audit.pr_number,
+                                                                     pr_comment_body(audit, link))
+    except (GitHubError, CredentialError) as exc:
+        raise FindingError(str(exc)) from exc
+    events.record("github.pr_comment", organization_id=org.id, target=audit, pr=audit.pr_number)
+    db.session.commit()
+    return result["html_url"]
+
+
 # ----------------------------------------------------------------------------------------- GitHub issues
 def issue_body(finding: Finding, audit: Audit, link: str) -> str:
     evidence = redact(finding.evidence or "").replace("```", "ʼʼʼ")

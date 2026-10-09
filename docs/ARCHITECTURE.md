@@ -59,7 +59,7 @@ eval_engine/
     dependencies.py, maintainability.py, architecture.py, performance.py    (built-in)
   ai/
     base.py          AIProvider protocol, AIRequest/AIResponse
-    providers.py     Anthropic, OpenAI, OpenAI-compatible local (e.g. Ollama), Disabled
+    anthropic_provider.py, openai_provider.py   official SDKs; OpenAI-compatible local endpoints via base_url
     prompts/         Versioned prompt templates (filename carries version)
     enrich.py        Prompt construction, injection hardening, strict JSON validation
 
@@ -68,15 +68,15 @@ eval_app/
   config.py          Environment-driven config classes
   extensions.py      db, migrate, login_manager, csrf
   models.py          SQLAlchemy models (see §4)
-  security/          crypto (Fernet), tenancy helpers, RBAC decorators, rate limiting
+  security/          crypto (Fernet), tenancy helpers, RBAC decorators, rate limiting, audit events
   auth/              register / login / logout, API tokens
   orgs/              organizations, memberships, invites
   projects/          projects, repositories, uploads
   audits/            audit creation, status, progress, comparison; Celery tasks
-  findings/          finding detail, triage (status changes), GitHub issue creation
-  integrations/      GitHub client + credential management
-  reports/           export endpoints
+  findings/          finding detail, triage, comparisons, report models, PR summaries, GitHub issues
+  integrations/      GitHub client, credential management, AI settings and API token pages
   api/               JSON API (/api/v1) with bearer tokens
+  ai_config.py       per-org AI settings -> Enricher for the worker
   templates/, static/
   celery_app.py      Celery app bound to Flask config
 ```
@@ -92,7 +92,7 @@ Repository Input → Secure Repository Inspection → Language Detection → Sta
 | Stage | Module | Notes |
 |---|---|---|
 | Input | `eval_app.audits.services` | ZIP stored in tenant-scoped upload dir; GitHub repos cloned at a pinned commit. |
-| Secure inspection | `workspace.py` | ZIP: rejects absolute paths, `..`, symlinks, device files; enforces file count, total and per-file size, compression ratio (zip bomb). Git: `https://` only, host allow-list, `--depth`, no submodules, hooks disabled, `core.symlinks=false`, credential passed via one-shot `GIT_ASKPASS`-free header, never in the URL stored or logged. |
+| Secure inspection | `workspace.py` | ZIP: rejects absolute paths, `..`, symlinks, device files; enforces file count, total and per-file size, compression ratio (zip bomb). Git: `https://` only, host allow-list, `--depth`, no submodules, hooks disabled, `core.symlinks=false`, credential passed as env-scoped git config (`GIT_CONFIG_*`), never in argv, the URL, or logs. |
 | Language detection | `languages.py` | Extension counts + manifests (`package.json`, `pyproject.toml`, `requirements*.txt`, `go.mod`, ...). Frameworks detected from manifest dependencies. |
 | Static analysis | `analyzers/*` | External tools are invoked via `sandbox.run()` with argv lists (no shell), timeouts, scrubbed env, and output caps. Missing tools produce an `AnalyzerOutcome(status="skipped", reason=...)` that is surfaced in the report — never a silent pass. Repository code is never imported or executed: built-in analyzers parse with `ast`/regex only. |
 | AI analysis | `ai/enrich.py` | Optional per org. Only sends redacted snippets of already-detected findings plus a repository summary. Repository content is wrapped in delimiters and declared untrusted; responses must be strict JSON matching a schema or are discarded. AI output can *explain* and *suggest remediation*; it **cannot** create findings that affect scores — AI-proposed observations are stored with `kind=ai_observation`, `confidence=low`, and excluded from scoring. |
@@ -120,7 +120,7 @@ users ──< memberships >── organizations ──< projects ──< reposit
                               ├──< api_tokens (hashed, per user per org)
                               └──< audit_events (security audit log)
 rules (global catalogue, keyed by rule_id) ──< findings.rule_id
-finding_occurrences: findings are per-audit; `fingerprint` links occurrences across audits
+findings are per-audit; `fingerprint` links occurrences of the same problem across audits
 ```
 
 | Table | Key columns |
@@ -131,7 +131,7 @@ finding_occurrences: findings are per-audit; `fingerprint` links occurrences acr
 | `projects` | id, organization_id, name, slug; unique(org, slug) |
 | `repositories` | id, organization_id, project_id, source ∈ {github, upload}, full_name, default_branch, credential_id (nullable) |
 | `uploads` | id, organization_id, repository_id, stored_path, sha256, size_bytes |
-| `audits` | id, organization_id, repository_id, upload_id, branch, commit_sha, status, stage, progress, error, scores (JSON), risk_level, overall_score, tool_status (JSON), engine_version, started/finished_at, previous_audit_id |
+| `audits` | id, organization_id, repository_id, upload_id, branch, commit_sha, trigger, pr_number, pr_base_ref, changed_files, status, stage, progress, error, scores (JSON), risk_level, overall_score, tool_status (JSON), ai_summary, engine_version, started/finished_at, previous_audit_id (lifecycle baseline) |
 | `findings` | id, organization_id, audit_id, rule_id, fingerprint, category, severity, confidence, kind (confirmed/potential/ai_observation/estimate), title, description, file_path, line_start, line_end, evidence (redacted snippet), remediation, sources (JSON), lifecycle ∈ {new, existing, recurring}, triage_status ∈ {open, accepted_risk, false_positive, fixed}, ai_explanation (JSON) |
 | `resolved_findings` | per-audit record of fingerprints present in the previous audit but absent now |
 | `rules` | rule_id (pk), title, category, default_severity, description, references |
@@ -164,5 +164,4 @@ finding_occurrences: findings are per-audit; `fingerprint` links occurrences acr
 * Future: PR audits (diff-scoped pipeline using the same engine with `changed_files` filter), CI
   integration (`eval-audit --fail-on high` exits non-zero), knowledge graph (import graph already
   computed by `architecture.py`), fix PRs (would require explicit approval flow — not implemented),
-  org policies (severity overrides / rule disables — schema slot reserved in `ai_settings`-like
-  `org_policies`, not implemented).
+  org policies (severity overrides / rule disables — not implemented; see ROADMAP.md).

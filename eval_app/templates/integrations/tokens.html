@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}API tokens{% endblock %}
+{% block content %}
+<h1 class="h3">API tokens</h1>
+<p class="text-muted">Tokens act as you within <strong>{{ g.org.name }}</strong> with your current role ({{ g.membership.role }}). Use them for CI pipelines and scripts — see <code>docs/API.md</code>.</p>
+{% if new_token %}
+<div class="alert alert-warning">
+  <strong>Copy this token now — it will not be shown again.</strong>
+  <pre class="evidence mb-0 mt-2 user-select-all">{{ new_token }}</pre>
+</div>
+{% endif %}
+<div class="row g-4">
+  <div class="col-lg-8">
+    <table class="table align-middle">
+      <thead><tr><th>Name</th><th>Prefix</th><th>Created</th><th>Last used</th><th></th></tr></thead>
+      <tbody>
+      {% for t in tokens %}
+        <tr class="{{ 'text-muted' if t.revoked_at }}">
+          <td>{{ t.name }}</td><td class="mono">{{ t.prefix }}…</td><td class="small">{{ t.created_at|dt }}</td><td class="small">{{ t.last_used_at|dt }}</td>
+          <td>{% if t.revoked_at %}revoked{% else %}
+            <form method="post" action="{{ url_for('integrations.revoke', org_slug=g.org.slug, token_id=t.id) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="btn btn-sm btn-outline-danger" data-confirm="Revoke this token? Pipelines using it will stop working.">Revoke</button>
+            </form>{% endif %}</td>
+        </tr>
+      {% else %}<tr><td colspan="5" class="text-muted">No tokens.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="col-lg-4">
+    <div class="card"><div class="card-body">
+      <h2 class="h5">New token</h2>
+      <form method="post" autocomplete="off">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label class="form-label">Name</label><input name="name" class="form-control mb-3" maxlength="120" placeholder="e.g. GitHub Actions" required>
+        <button class="btn btn-primary">Create token</button>
+      </form>
+    </div></div>
+  </div>
+</div>
+{% endblock %}
