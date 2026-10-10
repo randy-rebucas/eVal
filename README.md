@@ -21,6 +21,7 @@ indicators, and categories it could not assess are shown as *not assessed*.
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | installing the CLI, deploying the server, backups, upgrades, air-gapped |
 | [docs/RENDER.md](docs/RENDER.md) | step-by-step: deploy eVal on Render with the Blueprint |
 | [docs/CI.md](docs/CI.md) | GitHub Actions / CI gating, CLI |
+| [docs/IDE_PUBLISH.md](docs/IDE_PUBLISH.md) | step-by-step: publish the VS Code extension to the Marketplace and Open VSX |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | what is done, what is not |
 | [docs/LOCAL_AI.md](docs/LOCAL_AI.md) | eVal Local: on-device AI auditing plan |
 | [docs/NETWORK.md](docs/NETWORK.md) | what runs locally, what needs the internet, and what is sent |

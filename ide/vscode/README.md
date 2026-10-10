@@ -73,7 +73,9 @@ To debug from the repository root, press F5 and pick **eVal extension** (desktop
 ### Release
 
 Published as `randy-rebucas.eval-auditor` to the Visual Studio Marketplace and Open VSX by
-`.github/workflows/release-vscode.yml`. Bump `version` and `CHANGELOG.md`, then push a matching tag:
+`.github/workflows/release-vscode.yml`. Full guide, including account setup:
+[docs/IDE_PUBLISH.md](https://github.com/randy-rebucas/eVal/blob/main/docs/IDE_PUBLISH.md). In short: bump
+`version` and `CHANGELOG.md`, then push a matching tag:
 `git tag vscode-v0.1.1 && git push origin vscode-v0.1.1`. The workflow needs the repository secrets `VSCE_PAT`
 and `OVSX_PAT` in the `vscode-marketplace` environment. Manual release: `npm run package`, then
 `VSCE_PAT=… npm run publish:marketplace` and `OVSX_PAT=… npm run publish:openvsx`.
