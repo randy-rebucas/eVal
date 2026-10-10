@@ -47,9 +47,19 @@ class AnalyzerContext:
     _cache: dict[str, str | None] = field(default_factory=dict, repr=False)
     _file_set: set[str] = field(init=False, repr=False)
     _ast_cache: dict = field(default_factory=dict, repr=False)
+    _profile: object = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._file_set = set(self.files)
+
+    @property
+    def profile(self):
+        """The application profile (framework, auth schemes, datastores, password schema); built on first use."""
+        if self._profile is None:
+            from ..app_profile import build_profile
+
+            self._profile = build_profile(self)
+        return self._profile
 
     def read(self, rel: str) -> str | None:
         if rel not in self._cache:

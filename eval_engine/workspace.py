@@ -375,7 +375,9 @@ def read_text(root: Path, rel: str, max_bytes: int = 2 * 1024 * 1024) -> str | N
         return None
     if len(data) > max_bytes or b"\x00" in data[:8192]:
         return None
-    return data.decode("utf-8", errors="replace")
+    # utf-8-sig drops a leading byte-order mark (common from Windows editors); left in, it makes ast.parse fail and
+    # hides the first line of manifests, silently excluding the file from analysis.
+    return data.decode("utf-8-sig", errors="replace")
 
 
 def remove_tree(path: Path) -> None:

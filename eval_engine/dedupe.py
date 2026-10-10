@@ -13,6 +13,7 @@ RULE_FAMILIES: dict[str, str] = {
     "bandit:B107": "hardcoded-secret",
     "eval:secrets.hardcoded-credential": "hardcoded-secret",
     "eval:api.hardcoded-session-secret": "hardcoded-secret",
+    "eval:auth.jwt-hardcoded-secret": "hardcoded-secret",
     "eval:api.tls-verify-disabled": "tls-verify-disabled",
     "ruff:S105": "hardcoded-secret",
     "ruff:S106": "hardcoded-secret",

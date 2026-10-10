@@ -36,9 +36,11 @@ indicators, and categories it could not assess are shown as *not assessed*.
 - Users, organizations, roles (viewer/member/admin/owner), projects, tenant isolation on every query
 - GitHub repositories (public, or private via encrypted tokens) with branch/commit selection; ZIP uploads
 - Asynchronous audits on Celery + Redis with live progress and cancellation
-- 21 analyzers: Ruff, Bandit, mypy, ESLint, TypeScript, Semgrep, Trivy, OSV.dev, PyPI/npm registry checks, and
+- 22 analyzers: Ruff, Bandit, mypy, ESLint, TypeScript, Semgrep, Trivy, OSV.dev, PyPI/npm registry checks, and
   built-in checks for secrets, API security (including object-level authorization/IDOR, error disclosure, cookie
-  flags, credentials in logs, upload validation and rate limiting on login routes),
+  flags, credentials in logs, upload validation and rate limiting on login routes), **schema-aware auth checks**
+  (an application profile of framework, auth scheme, datastore and password schema decides whether CSRF, JWT,
+  password-storage and NoSQL-injection checks apply; the report shows the profile and why each applies),
   database access and schema design, DevOps/CI and observability (metrics, tracing, request ids, logging),
   testing, dependencies, maintainability (including swallowed errors), architecture (import cycles), performance
   and scalability (static estimates), **configuration assumptions** (undocumented environment variables,

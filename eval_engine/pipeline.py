@@ -63,12 +63,14 @@ class AuditResult:
     stats: dict
     engine_version: str = ENGINE_VERSION
     ai_summary: dict = field(default_factory=dict)
+    app_profile: dict = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
             "engine_version": self.engine_version,
             "scores": self.scorecard.to_dict(),
             "languages": self.languages.to_dict(),
+            "app_profile": self.app_profile,
             "tools": [o.to_dict() for o in self.outcomes],
             "lifecycle": {
                 "new": self.lifecycle.new,
@@ -218,4 +220,5 @@ def run_pipeline(root: Path, config: PipelineConfig | None = None) -> AuditResul
         lifecycle=lifecycle,
         stats=stats,
         ai_summary=ai_summary,
+        app_profile=ctx.profile.to_dict(),
     )
