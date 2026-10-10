@@ -1,6 +1,6 @@
 """API and web-application security: authentication coverage, object-level authorization (IDOR), error
-disclosure and error handling, debug mode, CORS, JWT and TLS verification, mass assignment, CSRF, and hardening
-middleware."""
+disclosure and error handling, debug mode, CORS, JWT and TLS verification, mass assignment, CSRF, cookie flags,
+credentials written to logs, file-upload validation, rate limiting, and hardening middleware."""
 
 from __future__ import annotations
 
@@ -45,6 +45,123 @@ PATH_PARAM = re.compile(r"<(?:[^:<>]+:)?(\w+)>|\{(\w+)(?::[^}]*)?\}|:(\w+)")
 RESPONSE_CALLS = {"jsonify", "JSONResponse", "make_response", "Response", "HTTPException", "abort", "HttpResponse",
                   "JsonResponse", "PlainTextResponse", "HTMLResponse"}
 BROAD_CATCH = {"", "Exception", "BaseException"}
+
+# Cookies: settings that turn a security flag off, and cookie names that carry a session or credential.
+COOKIE_FLAG_KEYS = {"SESSION_COOKIE_SECURE", "SESSION_COOKIE_HTTPONLY", "CSRF_COOKIE_SECURE", "REMEMBER_COOKIE_SECURE",
+                    "REMEMBER_COOKIE_HTTPONLY", "LANGUAGE_COOKIE_SECURE"}
+SENSITIVE_COOKIE = re.compile(r"(?i)(sess|token|auth|jwt|sid|remember|login|refresh|access|identity)")
+DEV_SETTINGS = re.compile(r"(?i)(^|/)[^/]*(dev|local|develop|debug|test)[^/]*\.py$")
+DEV_CONFIG_CLASS = re.compile(r"(?i)(dev|local|test|debug)")  # class DevelopmentConfig / TestingConfig
+JS_COOKIE_FLAG_OFF = re.compile(r"\b(httpOnly|secure)\s*:\s*false\b")
+JS_COOKIE_CONTEXT = re.compile(r"(?i)cookie|session")
+JS_BARE_COOKIE = re.compile(r"""\bres\.cookie\(\s*["'`]([\w.-]+)["'`]\s*,\s*[^,()]+(?:\([^()]*\))?\s*\)""")
+
+# Logging: logger receivers, identifiers that hold credentials, and calls that mask a value before it is logged.
+LOG_METHODS = {"debug", "info", "warning", "warn", "error", "exception", "critical", "fatal", "log"}
+LOGGER_RECEIVER = re.compile(r"(?i)(^|[._])(log|logger|logging)$")
+SENSITIVE_WORD = re.compile(r"(^|_)(password|passwd|passphrase|secret|secret_key|api_key|apikey|token|bearer|"
+                            r"authorization|credential|credentials|private_key|card_number|cvv|cvc|ssn)(_|$)")
+NOT_SENSITIVE_PREFIX = {"is", "has", "num", "n", "len", "count", "max", "min", "should", "use", "needs", "show"}
+NOT_SENSITIVE_SUFFIX = {"id", "ids", "count", "len", "length", "type", "url", "uri", "expires", "expiry", "exp", "at",
+                        "hash", "hashed", "name", "field", "fields", "policy", "min", "max", "valid", "ok", "required",
+                        "set", "changed", "reset", "strength", "prefix", "hint", "label", "endpoint", "path", "file",
+                        "ttl", "age", "lifetime", "version", "status", "error", "errors", "scope", "scopes", "kind",
+                        "format", "size", "index", "idx", "usage", "limit", "mask", "masked", "redacted"}
+MASKING_CALL = re.compile(r"(?i)(mask|redact|hash|digest|^len$|^bool$|^type$|truncat|obfuscat|fingerprint|censor|"
+                          r"scrub|sanitiz|anonymi)")
+REQUEST_SECRET_DUMPS = {"request.headers", "request.cookies", "request.COOKIES", "request.META", "req.headers",
+                        "req.cookies", "request.authorization"}
+JS_LOG_CALL = re.compile(r"\b(?:console|logger|log|winston|pino|this\.logger)\.(?:log|info|warn|error|debug|trace)"
+                         r"\s*\((.*)$")
+JS_IDENT = re.compile(r"[A-Za-z_$][\w$]*(?:\??\.[A-Za-z_$][\w$]*)*")
+
+# Uploads: where an uploaded file is read, and evidence that its type or size is checked before it is stored.
+UPLOAD_TYPES = ("UploadFile", "FileStorage", "UploadedFile")
+UPLOAD_CHECK = re.compile(r"(?i)(allowed_file|allowed_ext|ALLOWED_|splitext|rsplit\(\s*['\"]\.|\.suffix\b|content_type|"
+                          r"mimetype|mime|imghdr|filetype|magic\.|endswith\(|validat|is_valid\(|max_content_length|"
+                          r"content_length|\.size\b|FileExtensionValidator)")
+JS_CLIENT_FILENAME = re.compile(r"(?:\b(?:cb|callback|done)\s*\(\s*null\s*,[^)]*|path\.(?:join|resolve)\([^)]*|"
+                                r"(?:writeFile|createWriteStream|rename|\.mv)\w*\([^)]*)\boriginalname\b")
+
+# Rate limiting: authentication endpoints that attackers brute-force, and libraries/settings that throttle them.
+AUTH_ENDPOINT = re.compile(r"(?i)(login|log_in|signin|sign_in|token|password|passwd|reset|otp|mfa|2fa|"
+                           r"two_factor|verify|register|signup|sign_up)")
+PY_RATE_LIMIT = re.compile(r"(?i)(flask[_-]limiter|\bLimiter\b|slowapi|ratelimit|rate_limit|throttl|django[_-]axes|"
+                           r"\baxes\b|fastapi[_-]limiter|brute_?force|login_attempts|failed_attempts|lockout)")
+
+
+def _is_false(node) -> bool:
+    return isinstance(node, ast.Constant) and node.value is False
+
+
+def _config_key(target) -> str:
+    """``SESSION_COOKIE_SECURE`` from ``X = ...``, ``app.config["X"] = ...`` or ``settings.X = ...``."""
+    if isinstance(target, ast.Subscript) and isinstance(target.slice, ast.Constant):
+        return str(target.slice.value)
+    if isinstance(target, ast.Attribute):
+        return target.attr
+    return target.id if isinstance(target, ast.Name) else ""
+
+
+def _sensitive_name(name: str) -> bool:
+    """Whether an identifier or key names a credential (``password``, ``apiKey``, ``access_token``), and not
+    something about one (``token_count``, ``password_reset_url``, ``is_secret``)."""
+    snake = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", name).lower().strip("_")
+    parts = snake.split("_")
+    if parts[0] in NOT_SENSITIVE_PREFIX or parts[-1] in NOT_SENSITIVE_SUFFIX:
+        return False
+    return bool(SENSITIVE_WORD.search(snake))
+
+
+def _logged_secret(args) -> str | None:
+    """Source text of the first argument expression that puts a credential into a log record, if any."""
+    stack = list(args)
+    while stack:
+        node = stack.pop()
+        if isinstance(node, ast.Constant):
+            continue
+        label = None
+        if isinstance(node, ast.Call):
+            callee = _decorator_name(node)
+            if MASKING_CALL.search(callee.split(".")[-1]):
+                continue  # mask(token), len(password), hash(...)
+            if callee.endswith(".get") and node.args and isinstance(node.args[0], ast.Constant) \
+                    and isinstance(node.args[0].value, str) and _sensitive_name(node.args[0].value):
+                return ast.unparse(node)  # request.headers.get("Authorization"), data.get("password")
+        elif isinstance(node, ast.Name):
+            label = node.id
+        elif isinstance(node, ast.Attribute):
+            if ast.unparse(node) in REQUEST_SECRET_DUMPS:
+                return ast.unparse(node)
+            label = node.attr
+        elif isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) \
+                and isinstance(node.slice.value, str):
+            label = node.slice.value
+        elif isinstance(node, ast.Dict):
+            for k, v in zip(node.keys, node.values, strict=False):
+                if isinstance(k, ast.Constant) and isinstance(k.value, str) and _sensitive_name(k.value) \
+                        and not isinstance(v, ast.Constant):
+                    return ast.unparse(v)
+        if label and _sensitive_name(label):
+            return ast.unparse(node)
+        stack.extend(ast.iter_child_nodes(node))
+    return None
+
+
+def _js_logged_secret(args: str) -> str | None:
+    """Like ``_logged_secret`` for the argument text of a JavaScript logging call (string literals ignored)."""
+    text = re.sub(r"`([^`]*)`", lambda m: " ".join(re.findall(r"\$\{([^}]*)\}", m.group(1))), args)
+    text = re.sub(r"'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"", "''", text)
+    for m in JS_IDENT.finditer(text):
+        ident = m.group(0).replace("?.", ".")
+        if ident in REQUEST_SECRET_DUMPS:
+            return ident
+        before = text[:m.start()].rstrip()
+        if before.endswith(("(",)) and MASKING_CALL.search(re.split(r"[^\w$]", before[:-1])[-1] or "_"):
+            continue
+        if _sensitive_name(ident.rsplit(".", 1)[-1]):
+            return ident
+    return None
 
 
 def _decorator_name(dec: ast.AST) -> str:
@@ -102,7 +219,8 @@ class APISecurityAnalyzer(Analyzer):
     def run(self, ctx: AnalyzerContext):
         findings: list = []
         unprotected: list[tuple[str, int, str, str]] = []
-        auth_seen = error_handler_seen = False
+        auth_routes: list[tuple[str, int, str]] = []
+        auth_seen = error_handler_seen = rate_limit_seen = False
         route_count = 0
         for rel in ctx.python_files():
             if is_test_path(rel):
@@ -111,6 +229,7 @@ class APISecurityAnalyzer(Analyzer):
             if tree is None:
                 continue
             text = ctx.read(rel) or ""
+            rate_limit_seen = rate_limit_seen or bool(PY_RATE_LIMIT.search(text))
             if re.search(r"(?i)(login_required|jwt_required|LoginManager|HTTPBearer|OAuth2PasswordBearer|"
                          r"permission_required|auth_required|@\w*auth)", text):
                 auth_seen = True
@@ -132,6 +251,8 @@ class APISecurityAnalyzer(Analyzer):
                 route_count += 1
                 findings.extend(self._error_details(ctx, rel, node))
                 path, methods = routes[0][1]
+                if "POST" in methods and AUTH_ENDPOINT.search(f"{node.name} {path}"):
+                    auth_routes.append((rel, node.lineno, f"POST {path}"))
                 others = [_decorator_name(d) for d in node.decorator_list if d is not routes[0][0]]
                 protected = file_guard or any(AUTH_DECORATOR.search(n) for n in others) or _fastapi_protected(
                     node, routes[0][0])
@@ -161,12 +282,34 @@ class APISecurityAnalyzer(Analyzer):
         findings.extend(self._unprotected(ctx, unprotected, auth_seen))
         findings.extend(self._project_level(ctx))
         findings.extend(self._no_error_handler(ctx, route_count, error_handler_seen))
+        findings.extend(self._python_rate_limit(ctx, auth_routes, rate_limit_seen))
         return findings
+
+    def _python_rate_limit(self, ctx, auth_routes, rate_limit_seen):
+        if not auth_routes or rate_limit_seen:
+            return []
+        manifests = ctx.files_named("requirements.txt", "pyproject.toml", "Pipfile", "setup.cfg", "setup.py")
+        if any(PY_RATE_LIMIT.search(ctx.read(f) or "") for f in manifests):
+            return []
+        rel, line, desc = auth_routes[0]
+        return [self._f(ctx, "api.no-rate-limiting", f"Authentication endpoint without rate limiting: {desc}",
+                        Severity.LOW, Confidence.LOW, FindingKind.POTENTIAL,
+                        f"{len(auth_routes)} login/token/password route(s) were found (first: {desc}) but no rate "
+                        "limiting library, decorator or lockout logic (Flask-Limiter, slowapi, django-ratelimit, "
+                        "django-axes, …) appears in the code or dependencies. Without it, passwords and one-time "
+                        "codes can be brute-forced and credential lists replayed. A gateway, WAF or reverse proxy may "
+                        "already limit these routes — verify.",
+                        "Rate-limit authentication endpoints per IP and per account (e.g. Flask-Limiter "
+                        "`@limiter.limit('5/minute')`, slowapi, django-ratelimit) and add progressive lockout.",
+                        rel, line)]
 
     # ------------------------------------------------------------------------------------------- python
     def _python_file(self, ctx, rel, tree, text):
         out = []
         settings_like = rel.endswith(("settings.py", "config.py", "settings/production.py", "settings/base.py"))
+        # Cookie flags turned off in a dev/test settings file or config class are expected, not a finding.
+        dev_only = {id(n) for c in ast.walk(tree) if isinstance(c, ast.ClassDef) and DEV_CONFIG_CLASS.search(c.name)
+                    for n in ast.walk(c)} if not DEV_SETTINGS.search(rel) else None
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
                 name = _decorator_name(node)
@@ -203,6 +346,18 @@ class APISecurityAnalyzer(Analyzer):
                     wildcard = origins is None or "'*'" in ast.unparse(origins) or '"*"' in ast.unparse(origins)
                     if wildcard:
                         out.append(self._cors(ctx, rel, node.lineno, creds))
+                if name.endswith("set_cookie"):
+                    out.extend(self._py_set_cookie(ctx, rel, node, kws))
+                for kw in node.keywords:  # app.config.update(SESSION_COOKIE_SECURE=False)
+                    if kw.arg in COOKIE_FLAG_KEYS and _is_false(kw.value) and dev_only is not None \
+                            and id(node) not in dev_only:
+                        out.append(self._cookie_setting(ctx, rel, node.lineno, kw.arg))
+                if isinstance(node.func, ast.Attribute) and node.func.attr in LOG_METHODS and \
+                        LOGGER_RECEIVER.search(ast.unparse(node.func.value)):
+                    leaked = _logged_secret(node.args[1:] if node.args and isinstance(node.args[0], ast.Constant)
+                                            else node.args) or _logged_secret(k.value for k in node.keywords)
+                    if leaked and len([f for f in out if f.rule_id.endswith("sensitive-data-logged")]) < 20:
+                        out.append(self._sensitive_log(ctx, rel, node.lineno, leaked))
                 if name.endswith(("requests.get", "requests.post", "requests.put", "requests.patch",
                                   "requests.delete", "requests.request", "httpx.get", "httpx.post")) and isinstance(
                         kws.get("verify"), ast.Constant) and kws["verify"].value is False:
@@ -237,6 +392,10 @@ class APISecurityAnalyzer(Analyzer):
                                        "Debug mode in a settings/config module risks shipping it to production.",
                                        "Derive DEBUG from an environment variable defaulting to False.",
                                        rel, node.lineno, Category.SECURITY))
+                cookie_key = _config_key(node.targets[0])
+                if cookie_key in COOKIE_FLAG_KEYS and _is_false(value) and dev_only is not None \
+                        and id(node) not in dev_only:
+                    out.append(self._cookie_setting(ctx, rel, node.lineno, cookie_key))
                 if target == "ALLOWED_HOSTS" and "'*'" in ast.unparse(value):
                     out.append(self._f(ctx, "api.django-allowed-hosts-wildcard", "ALLOWED_HOSTS allows any host",
                                        Severity.MEDIUM, Confidence.HIGH, FindingKind.CONFIRMED,
@@ -250,6 +409,81 @@ class APISecurityAnalyzer(Analyzer):
                                "was found in it (it may be configured elsewhere).",
                                "Enable Flask-WTF CSRFProtect app-wide (or SameSite=Strict cookies plus origin "
                                "checks).", rel, None))
+        out.extend(self._python_uploads(ctx, rel, tree))
+        return out
+
+    def _py_set_cookie(self, ctx, rel, node, kws):
+        """``response.set_cookie("session", ...)`` without Secure/HttpOnly (Flask, Django and Starlette all default
+        both to off)."""
+        name_node = node.args[0] if node.args else kws.get("key")
+        cookie = name_node.value if isinstance(name_node, ast.Constant) and isinstance(name_node.value, str) else ""
+        if not SENSITIVE_COOKIE.search(cookie) or re.search(r"(?i)csrf|xsrf", cookie):
+            return []
+        off = [flag for flag in ("secure", "httponly") if _is_false(kws.get(flag))]
+        missing = [flag for flag in ("secure", "httponly") if flag not in kws]
+        if not off and not missing:
+            return []
+        flags = ", ".join(f"{f}=False" for f in off) + (", " if off and missing else "") + ", ".join(
+            f"no {f}" for f in missing)
+        return [self._f(ctx, "api.insecure-cookie", f"Cookie `{cookie}` set without Secure/HttpOnly ({flags})",
+                        Severity.MEDIUM, Confidence.HIGH if off else Confidence.MEDIUM, FindingKind.POTENTIAL,
+                        f"`{cookie}` looks like a session or credential cookie. Without HttpOnly any XSS can read it; "
+                        "without Secure the browser also sends it over plain HTTP, where it can be intercepted. "
+                        "Flask, Django and Starlette leave both flags off unless they are passed. (A proxy that "
+                        "rewrites Set-Cookie headers would mitigate this — verify.)",
+                        "Pass secure=True, httponly=True and samesite='Lax' (or 'Strict') when setting session or "
+                        "token cookies.", rel, node.lineno, Category.SECURITY)]
+
+    def _cookie_setting(self, ctx, rel, line, key):
+        return self._f(ctx, "api.insecure-cookie", f"{key} disabled", Severity.MEDIUM, Confidence.MEDIUM,
+                       FindingKind.CONFIRMED,
+                       f"`{key} = False` turns off a protection on the framework's session/auth cookie: "
+                       + ("the cookie is also sent over plain HTTP, where it can be intercepted."
+                          if key.endswith("SECURE") else "JavaScript (and therefore any XSS) can read the cookie.")
+                       + " This module is not a development-only settings file; if it is overridden in production, "
+                       "move the override here.",
+                       f"Set {key} = True in production settings (keep False only in local development settings).",
+                       rel, line, Category.SECURITY)
+
+    def _sensitive_log(self, ctx, rel, line, expr):
+        return self._f(ctx, "api.sensitive-data-logged", f"Credential written to a log: `{expr[:60]}`",
+                       Severity.MEDIUM, Confidence.MEDIUM, FindingKind.POTENTIAL,
+                       f"`{expr[:120]}` is passed to a logging call. Logs are copied to aggregators, backups and "
+                       "support tools and are read by far more people than the data store, so passwords, tokens or "
+                       "keys in them are effectively disclosed. (The value may already be masked by the caller or a "
+                       "log filter — verify.)",
+                       "Do not log credentials. Log an identifier (user id, key id, last 4 characters) instead, and "
+                       "add a redacting log filter as a safety net.", rel, line, Category.SECURITY)
+
+    def _python_uploads(self, ctx, rel, tree):
+        """Handlers that store an uploaded file without any visible check of its type or size."""
+        out = []
+        for func in ast.walk(tree):
+            if not isinstance(func, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            src = ast.unparse(func)
+            annotated = any(a.annotation is not None and any(t in ast.unparse(a.annotation) for t in UPLOAD_TYPES)
+                            for a in [*func.args.args, *func.args.kwonlyargs])
+            if not (annotated or re.search(r"\brequest\.(files|FILES)\b", src)):
+                continue
+            store = next((n for n in ast.walk(func) if isinstance(n, ast.Call) and (
+                _decorator_name(n).split(".")[-1] in ("save", "copyfileobj", "upload_fileobj", "put_object")
+                or (_decorator_name(n) == "open" and any(isinstance(m, ast.Constant) and isinstance(m.value, str)
+                                                         and "w" in m.value
+                                                         for m in [*n.args[1:2], *(k.value for k in n.keywords
+                                                                                   if k.arg == "mode")])))), None)
+            if store is None or UPLOAD_CHECK.search(src):
+                continue
+            out.append(self._f(ctx, "api.upload-unvalidated", f"File upload stored without a type or size check in "
+                               f"`{func.name}()`", Severity.MEDIUM, Confidence.LOW, FindingKind.POTENTIAL,
+                               "The handler saves an uploaded file but checks neither its extension/content type nor "
+                               "its size. Attackers can upload HTML/SVG (stored XSS when served back), server-side "
+                               "scripts (code execution if the directory is executable or served), or huge files "
+                               "(disk exhaustion). The check may live in a helper or the web server — verify.",
+                               "Allow-list extensions and verify the content type/magic bytes, cap the size "
+                               "(MAX_CONTENT_LENGTH / DATA_UPLOAD_MAX_MEMORY_SIZE / a proxy limit), store under a "
+                               "generated name outside the web root, and serve with Content-Disposition: attachment.",
+                               rel, store.lineno, Category.SECURITY))
         return out
 
     def _python_idor(self, ctx, rel, func, path, decorators):
@@ -378,7 +612,56 @@ class APISecurityAnalyzer(Analyzer):
     # ------------------------------------------------------------------------------------------------ js
     def _js_file(self, ctx, rel, text):
         out = []
-        for i, line in enumerate(ctx.lines(rel), start=1):
+        lines = ctx.lines(rel)
+        logged = 0
+        for i, line in enumerate(lines, start=1):
+            off = sorted(set(JS_COOKIE_FLAG_OFF.findall(line)))
+            if off and JS_COOKIE_CONTEXT.search("\n".join(lines[max(0, i - 4):i])):  # this line and 3 above
+                out.append(self._f(ctx, "api.insecure-cookie", "Cookie option " + ", ".join(f"{o}: false" for o in off),
+                                   Severity.MEDIUM, Confidence.MEDIUM, FindingKind.POTENTIAL,
+                                   "A cookie or session configuration turns off "
+                                   + " and ".join("HttpOnly (any XSS can read the cookie)" if o == "httpOnly" else
+                                                  "Secure (the browser also sends the cookie over plain HTTP)"
+                                                  for o in off)
+                                   + ". If this is a session or token cookie it can be stolen. (Development-only "
+                                   "configuration is fine — verify which environment uses it.)",
+                                   "Use httpOnly: true, secure: true (behind TLS; set app.set('trust proxy', 1) "
+                                   "behind a proxy) and sameSite: 'lax' for session and token cookies.", rel, i,
+                                   Category.SECURITY))
+            m = JS_BARE_COOKIE.search(line)
+            if m and SENSITIVE_COOKIE.search(m.group(1)) and not re.search(r"(?i)csrf|xsrf", m.group(1)):
+                out.append(self._f(ctx, "api.insecure-cookie", f"Cookie `{m.group(1)}` set without options",
+                                   Severity.MEDIUM, Confidence.MEDIUM, FindingKind.POTENTIAL,
+                                   "Express's res.cookie() sets neither HttpOnly nor Secure by default, so this "
+                                   "session/token cookie is readable by scripts and sent over plain HTTP.",
+                                   "Pass { httpOnly: true, secure: true, sameSite: 'lax' }.", rel, i,
+                                   Category.SECURITY))
+            m = JS_LOG_CALL.search(line)
+            leaked = _js_logged_secret(m.group(1)) if m else None
+            if leaked and logged < 20:
+                logged += 1
+                out.append(self._sensitive_log(ctx, rel, i, leaked))
+            if JS_CLIENT_FILENAME.search(line):
+                out.append(self._f(ctx, "api.upload-client-filename", "Uploaded file stored under the client's file "
+                                   "name", Severity.HIGH, Confidence.MEDIUM, FindingKind.POTENTIAL,
+                                   "`originalname` comes from the multipart request and is chosen by the client. Used "
+                                   "as the destination name it allows path traversal (`../../`) and overwriting "
+                                   "other uploads or application files.",
+                                   "Generate the stored name server-side (crypto.randomUUID() plus an allow-listed "
+                                   "extension) and keep originalname only as metadata.", rel, i, Category.SECURITY))
+        multer = re.search(r"\bmulter\s*\(", text)
+        if multer and "fileFilter" not in text:
+            line = text.count("\n", 0, multer.start()) + 1
+            out.append(self._f(ctx, "api.upload-unvalidated", "multer upload without a fileFilter"
+                               + ("" if "limits" in text else " or size limits"), Severity.MEDIUM, Confidence.MEDIUM,
+                               FindingKind.POTENTIAL,
+                               "multer accepts every file type" + ("" if "limits" in text else " of unlimited size")
+                               + " unless configured. Attackers can upload HTML/SVG (stored XSS when served back), "
+                               "executable scripts, or huge files. Validation may happen later in the handler — "
+                               "verify.",
+                               "Add a fileFilter that allow-lists MIME types/extensions, set limits.fileSize, and "
+                               "store uploads outside the web root.", rel, line, Category.SECURITY))
+        for i, line in enumerate(lines, start=1):
             if JS_ERROR_LEAK.search(line):
                 out.append(self._f(ctx, "api.error-details-exposed", "Stack trace returned to the client",
                                    Severity.MEDIUM, Confidence.HIGH, FindingKind.CONFIRMED,

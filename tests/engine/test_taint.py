@@ -152,3 +152,52 @@ def test_taint_upgrades_the_pattern_finding_on_the_same_line(tmp_path):
     assert len(sql) == 1, [(f.rule_id, f.sources) for f in result.findings]
     f = sql[0]
     assert set(f.sources) == {"taint", "database"} and f.kind == "confirmed" and "Data flow in users()" in f.description
+
+
+def test_deserialization_and_upload_flows(tmp_path):
+    findings = _run(tmp_path, '''
+        import base64, os, pickle, yaml
+        from flask import request
+        from werkzeug.utils import secure_filename
+
+        def load():
+            obj = pickle.loads(request.data)
+            prefs = pickle.loads(base64.b64decode(request.cookies["prefs"]))
+            cfg = yaml.load(request.files["cfg"].read())
+            ok = yaml.load(request.data, Loader=yaml.SafeLoader)
+            fine = yaml.safe_load(request.data)
+            local = pickle.loads(open("cache.bin", "rb").read())
+
+        def upload():
+            f = request.files["file"]
+            f.save(os.path.join("/srv/uploads", f.filename))
+            f.save(os.path.join("/srv/uploads", secure_filename(f.filename)))
+    ''')
+    got = sorted((f.rule_id.split(".", 1)[1], f.line_start) for f in findings)
+    assert got == [("insecure-deserialization", 7), ("insecure-deserialization", 8), ("insecure-yaml-load", 9),
+                   ("upload-path-traversal", 16)], got
+    prefs = next(f for f in findings if f.line_start == 8)
+    assert "request.cookies" in prefs.description and "CWE-502" in prefs.description and prefs.severity == "critical"
+
+
+def test_bandit_pattern_is_potential_until_taint_confirms_it(tmp_path):
+    import pytest
+
+    from eval_engine import sandbox
+
+    if sandbox.which("bandit") is None:
+        pytest.skip("bandit not installed")
+    (tmp_path / "app.py").write_text(textwrap.dedent('''
+        import pickle
+        from flask import request
+
+        def a():
+            return pickle.loads(request.data)
+
+        def b(blob):
+            return pickle.loads(blob)
+    '''))
+    result = run_pipeline(tmp_path, PipelineConfig(analyzers=["taint", "bandit"]))
+    by_line = {f.line_start: f for f in result.findings if "pickle" in f.title.lower() or "taint" in f.rule_id}
+    assert by_line[6].kind == "confirmed" and "taint" in by_line[6].sources  # traced from request.data
+    assert by_line[9].kind == "potential"  # pattern only: nothing shows blob is attacker-controlled

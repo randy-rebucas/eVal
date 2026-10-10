@@ -243,7 +243,7 @@ class DatabaseAnalyzer(Analyzer):
         return self.finding(
             ctx, rule="database.sql-string-formatting", title=f"SQL statement built with {how}",
             category=Category.DATABASE, severity=Severity.LOW if in_tests else Severity.HIGH,
-            confidence=Confidence.MEDIUM, kind=FindingKind.CONFIRMED,
+            confidence=Confidence.MEDIUM, kind=FindingKind.POTENTIAL,
             description="A SQL statement is assembled from runtime values instead of bound parameters. If any "
             "interpolated value can be influenced by a user, this is SQL injection. eVal did not trace data flow, "
             "so verify whether inputs are attacker-controlled.",

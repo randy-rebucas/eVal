@@ -92,6 +92,88 @@ def test_jwt_verification_disabled(tmp_path):
     assert found == [(2, "high"), (3, "critical")]
 
 
+def _api_findings(tmp_path, files):
+    for name, code in files.items():
+        (tmp_path / name).write_text(code)
+    out = run_analyzer(registry.get(["api_security"])[0], ctx_for(tmp_path))
+    return sorted((f.rule_id.removeprefix("eval:api."), f.file_path, f.line_start, f.kind) for f in out.findings
+                  if f.rule_id.removeprefix("eval:api.") in ("insecure-cookie", "sensitive-data-logged",
+                                                            "upload-unvalidated", "upload-client-filename",
+                                                            "no-rate-limiting"))
+
+
+def test_insecure_cookies(tmp_path):
+    got = _api_findings(tmp_path, {
+        "settings.py": "SESSION_COOKIE_SECURE = False\nSESSION_COOKIE_HTTPONLY = True\n"
+                       "class TestingConfig:\n    SESSION_COOKIE_SECURE = False\n",
+        "settings_dev.py": "SESSION_COOKIE_SECURE = False\n",
+        "views.py": "def v(resp, t):\n"
+                    "    resp.set_cookie('session_id', t)\n"
+                    "    resp.set_cookie('auth', t, secure=False, httponly=True)\n"
+                    "    resp.set_cookie('auth', t, secure=True, httponly=True)\n"
+                    "    resp.set_cookie('theme', 'dark')\n"
+                    "    resp.set_cookie('csrftoken', t, secure=True)\n",
+        "server.js": "app.use(session({ secret: s, cookie: { httpOnly: false } }));\n"
+                     "res.cookie('jwt', token);\nres.cookie('jwt', token, { httpOnly: true, secure: true });\n"
+                     "\n\n\nconst mail = { host: h, secure: false };  // SMTP option\n",
+    })
+    assert got == [("insecure-cookie", "server.js", 1, "potential"), ("insecure-cookie", "server.js", 2, "potential"),
+                   ("insecure-cookie", "settings.py", 1, "confirmed"), ("insecure-cookie", "views.py", 2, "potential"),
+                   ("insecure-cookie", "views.py", 3, "potential")], got
+
+
+def test_sensitive_data_logged(tmp_path):
+    got = _api_findings(tmp_path, {
+        "auth.py": "import logging\nlog = logging.getLogger(__name__)\n"
+                   "def login(request, password, user):\n"
+                   "    log.info('login %s %s', user.email, password)\n"
+                   "    log.debug(f'headers: {request.headers}')\n"
+                   "    logging.warning('auth', extra={'api_key': user.key})\n"
+                   "    log.info('bad password for %s', user.email)\n"
+                   "    log.info('token count %d', token_count)\n"
+                   "    log.info('len %d', len(password))\n"
+                   "    log.info('%s', mask_token(user.token))\n"
+                   "    print(password)\n",
+        "app.js": "console.log(`user ${req.body.email} pw ${req.body.password}`);\n"
+                  "logger.info('invalid password for', user.email);\n"
+                  "console.log(req.headers);\n",
+    })
+    assert got == [("sensitive-data-logged", "app.js", 1, "potential"),
+                   ("sensitive-data-logged", "app.js", 3, "potential"),
+                   ("sensitive-data-logged", "auth.py", 4, "potential"),
+                   ("sensitive-data-logged", "auth.py", 5, "potential"),
+                   ("sensitive-data-logged", "auth.py", 6, "potential")], got
+
+
+def test_unvalidated_uploads(tmp_path):
+    got = _api_findings(tmp_path, {
+        "up.py": "from flask import request\n"
+                 "def upload():\n"
+                 "    f = request.files['f']\n"
+                 "    f.save('/srv/uploads/x')\n"
+                 "def upload_checked():\n"
+                 "    f = request.files['f']\n"
+                 "    if not allowed_file(f.filename):\n        abort(400)\n"
+                 "    f.save('/srv/uploads/y')\n"
+                 "async def api(file: UploadFile):\n"
+                 "    with open('/srv/z', 'wb') as out:\n        out.write(await file.read())\n",
+        "server.js": "const upload = multer({ dest: 'uploads/' });\n"
+                     "const s = multer.diskStorage({ filename: (req, file, cb) => cb(null, file.originalname) });\n",
+        "ok.js": "const upload = multer({ dest: 'u/', fileFilter, limits: { fileSize: 1e6 } });\n",
+    })
+    assert got == [("upload-client-filename", "server.js", 2, "potential"),
+                   ("upload-unvalidated", "server.js", 1, "potential"),
+                   ("upload-unvalidated", "up.py", 4, "potential"),
+                   ("upload-unvalidated", "up.py", 11, "potential")], got
+
+
+def test_python_login_without_rate_limiting(tmp_path):
+    route = "@app.post('/auth/login')\ndef login():\n    return 1\n"
+    assert _api_findings(tmp_path, {"app.py": route}) == [("no-rate-limiting", "app.py", 2, "potential")]
+    (tmp_path / "requirements.txt").write_text("Flask-Limiter==3.5\n")
+    assert _api_findings(tmp_path, {"app.py": route}) == []
+
+
 def test_database_analyzer():
     _, rules, findings = rules_from("database", "vulnapp")
     assert {"eval:database.sql-string-formatting", "eval:database.fk-without-index",

@@ -8,6 +8,7 @@ Propagation (intra-procedural, flow-insensitive within a function): assignments,
 ``+`` / ``%`` / ``.format()``, ``str()``, ``"".join()``, subscripts and string methods of tainted values. Results
 of other function calls are *not* tainted, and ``int()``, ``float()``, ``uuid.UUID()``, ``secure_filename()``,
 ``shlex.quote()``, ``html.escape()`` / ``escape()``, ``os.path.basename()`` and ``urllib.parse.quote()`` sanitize.
+Decoders (``base64.b64decode()``, ``unquote()``, ``zlib.decompress()``) and ``.read()`` keep the taint.
 The analysis favours precision: it reports a flow only when it can name the source line, the variables it passed
 through, and the sink. Flows across functions or modules are not followed.
 """
@@ -27,7 +28,10 @@ REQUEST_CALLS = {"get_json", "get_data"}
 SANITIZERS = {"int", "float", "bool", "UUID", "secure_filename", "quote", "escape", "basename", "abs", "len",
               "quote_plus", "urlencode"}
 PROPAGATING_METHODS = {"strip", "lstrip", "rstrip", "lower", "upper", "replace", "format", "encode", "decode",
-                       "split", "get", "getlist", "title", "casefold", "removeprefix", "removesuffix"}
+                       "split", "get", "getlist", "title", "casefold", "removeprefix", "removesuffix", "read"}
+# Decoders whose output is still the attacker's bytes (``pickle.loads(base64.b64decode(cookie))``).
+PROPAGATING_FUNCS = {"b64decode", "urlsafe_b64decode", "b32decode", "a2b_base64", "unhexlify", "decompress",
+                     "unquote", "unquote_plus"}
 ROUTE_DECORATORS = {"route", "get", "post", "put", "patch", "delete", "api_route", "websocket"}
 SAFE_PARAM_TYPES = {"int", "float", "bool", "UUID", "date", "datetime", "Decimal"}
 
@@ -57,12 +61,25 @@ SSTI = Sink("taint.template-injection", "Template injection: request data is ren
             "CWE-1336", "Render fixed templates and pass request values as context variables.")
 REDIRECT = Sink("taint.open-redirect", "Open redirect: request data chooses the redirect target", Severity.MEDIUM,
                 "CWE-601", "Redirect only to relative paths on this site, or to an allow-list of URLs.")
+DESERIALIZE = Sink("taint.insecure-deserialization", "Insecure deserialization: request data is unpickled",
+                   Severity.CRITICAL, "CWE-502", "Never unpickle/unmarshal client data: it executes arbitrary code. "
+                   "Accept JSON (or another data-only format) and validate it with a schema; sign server-issued blobs "
+                   "with an HMAC and verify before decoding.")
+YAML_LOAD = Sink("taint.insecure-yaml-load", "Insecure deserialization: request data is loaded with an unsafe YAML "
+                 "loader", Severity.CRITICAL, "CWE-502", "Use yaml.safe_load() (or Loader=yaml.SafeLoader).")
+UPLOAD = Sink("taint.upload-path-traversal", "Uploaded file saved under a client-supplied file name", Severity.HIGH,
+              "CWE-22", "Never build the destination from the client's file name: generate a server-side name "
+              "(uuid4 plus an allow-listed extension) or pass it through werkzeug.utils.secure_filename(), and save "
+              "under a fixed upload directory.")
 
 SQL_METHODS = {"execute", "executemany", "executescript", "raw", "extra", "text", "from_statement"}
 SHELL_FUNCS = {"system", "popen"}
 SUBPROCESS_FUNCS = {"run", "call", "Popen", "check_output", "check_call", "getoutput", "getstatusoutput"}
 HTTP_FUNCS = {"get", "post", "put", "patch", "delete", "head", "options", "request", "urlopen", "stream"}
 HTTP_MODULES = {"requests", "httpx", "urllib", "request", "session", "client", "http", "aiohttp"}
+PICKLE_MODULES = {"pickle", "cPickle", "_pickle", "marshal", "dill", "jsonpickle", "shelve", "cloudpickle"}
+PICKLE_FUNCS = {"loads", "load", "decode", "Unpickler", "open"}
+SAFE_YAML_LOADERS = {"SafeLoader", "CSafeLoader", "BaseLoader", "CBaseLoader", "FullLoader", "CFullLoader"}
 
 
 def _name(node) -> str:
@@ -114,7 +131,7 @@ class _Function:
                 if fname in ("format", "join"):  # "...".format(x), "".join(xs), os.path.join(base, x)
                     return next((s for a in [*node.args, *(k.value for k in node.keywords)]
                                  if (s := self.source(a))), None)
-            if fname == "str" and node.args:
+            if fname in ("str", *PROPAGATING_FUNCS) and node.args:
                 return self.source(node.args[0])
             return None
         if isinstance(node, ast.IfExp):
@@ -179,6 +196,14 @@ class _Function:
                     hit = (CMD, first)
             elif isinstance(node.func, ast.Name) and fname in ("eval", "exec") and first is not None:
                 hit = (CODE, first)
+            elif fname in PICKLE_FUNCS and root in PICKLE_MODULES and first is not None:
+                hit = (DESERIALIZE, first)
+            elif root == "yaml" and fname in ("load", "load_all", "unsafe_load", "unsafe_load_all") \
+                    and first is not None and not _safe_yaml_loader(
+                        kw.get("Loader") or (node.args[1] if len(node.args) > 1 else None)):
+                hit = (YAML_LOAD, first)
+            elif fname == "save" and isinstance(node.func, ast.Attribute) and first is not None:
+                hit = (UPLOAD, first)  # FileStorage.save(dst) / storage.save(name, content)
             elif file_call and first is not None:
                 hit = (PATH, first)
             elif fname in HTTP_FUNCS and root in HTTP_MODULES and (first is not None or "url" in kw):
@@ -217,6 +242,11 @@ def _guarded(func, call) -> bool:
                                                                               for c in ast.walk(b)):
             return True
     return False
+
+
+def _safe_yaml_loader(loader) -> bool:
+    """``Loader=yaml.SafeLoader`` (or FullLoader, which refuses arbitrary Python objects since PyYAML 5.4)."""
+    return loader is not None and _name(loader) in SAFE_YAML_LOADERS
 
 
 def _has_request_attr(node) -> bool:

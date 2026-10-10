@@ -37,12 +37,14 @@ indicators, and categories it could not assess are shown as *not assessed*.
 - GitHub repositories (public, or private via encrypted tokens) with branch/commit selection; ZIP uploads
 - Asynchronous audits on Celery + Redis with live progress and cancellation
 - 21 analyzers: Ruff, Bandit, mypy, ESLint, TypeScript, Semgrep, Trivy, OSV.dev, PyPI/npm registry checks, and
-  built-in checks for secrets, API security (including object-level authorization/IDOR and error disclosure),
+  built-in checks for secrets, API security (including object-level authorization/IDOR, error disclosure, cookie
+  flags, credentials in logs, upload validation and rate limiting on login routes),
   database access and schema design, DevOps/CI and observability (metrics, tracing, request ids, logging),
   testing, dependencies, maintainability (including swallowed errors), architecture (import cycles), performance
   and scalability (static estimates), **configuration assumptions** (undocumented environment variables,
   hardcoded local endpoints and paths, APIs without an OpenAPI contract), **taint analysis** (request data
-  reaching SQL, shell, eval, file paths, outbound URLs, templates, redirects) and **AI-generated-code patterns**
+  reaching SQL, shell, eval, file paths, upload destinations, pickle/YAML deserialization, outbound URLs,
+  templates, redirects) and **AI-generated-code patterns**
   (hallucinated or lookalike packages, undeclared imports, stubs, placeholders, tests that cannot fail). Missing
   tools are reported, never silently skipped.
 - Findings with evidence, location, severity, confidence, type (confirmed / potential / estimate / AI), and
