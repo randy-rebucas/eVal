@@ -119,6 +119,8 @@ issues live in `tests/fixtures/` (excluded from linting and test collection).
    compare with earlier audits, export, or create GitHub issues.
 4. Optional: enable AI under *Integrations → AI-assisted analysis* with an Anthropic/OpenAI key.
 5. CI: create an API token and use `scripts/eval_ci.py` (see docs/CI.md).
+6. Editor: the VS Code extension in `ide/vscode` shows open findings as diagnostics, runs audits of the current
+   branch and records triage decisions with the same API token (see [ide/vscode/README.md](ide/vscode/README.md)).
 
 ### Dependency findings and suggested fixes
 
@@ -228,6 +230,7 @@ eval_engine/   analysis engine (no Flask): workspace, sandbox, analyzers, scorin
 eval_app/      Flask SaaS: auth, orgs, projects, audits (Celery), findings, integrations, API, templates
 migrations/    Alembic migrations
 scripts/       eval_ci.py (CI gate)
+ide/vscode/    VS Code extension (TypeScript): findings as diagnostics, audits, triage via /api/v1
 tests/         engine + app tests, fixture repositories
 docs/          architecture, security, scoring, API, CI, roadmap
 ```

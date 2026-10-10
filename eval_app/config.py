@@ -79,6 +79,15 @@ class BaseConfig:
     AUTH_LINKEDIN_CLIENT_ID = os.environ.get("AUTH_LINKEDIN_CLIENT_ID", "")
     AUTH_LINKEDIN_CLIENT_SECRET = os.environ.get("AUTH_LINKEDIN_CLIENT_SECRET", "")
 
+    # Browser origins allowed to call /api/v1 cross-origin (bearer token only, never cookies). Comma-separated;
+    # "https://*.example.com" matches subdomains, "*" any origin, empty disables CORS. The default covers the web
+    # extension host of vscode.dev / github.dev, which runs on *.vscode-cdn.net.
+    API_CORS_ORIGINS = [
+        o.strip().rstrip("/") for o in os.environ.get(
+            "EVAL_API_CORS_ORIGINS", "https://*.vscode-cdn.net,https://vscode.dev,https://github.dev",
+        ).split(",") if o.strip()
+    ]
+
     # Operator allow-list for OpenAI-compatible AI endpoints (e.g. http://ollama:11434/v1). Prevents SSRF.
     AI_ALLOWED_BASE_URLS = os.environ.get("EVAL_AI_ALLOWED_BASE_URLS", "")
     AI_TIMEOUT_SECONDS = _int("EVAL_AI_TIMEOUT_SECONDS", 120)

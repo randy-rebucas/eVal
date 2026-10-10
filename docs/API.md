@@ -25,6 +25,10 @@ Authorization: Bearer evl_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
 Errors are JSON: `{"error": "message"}`.
 
+Browser clients: `/api/v1` answers CORS requests from the origins in `EVAL_API_CORS_ORIGINS` (by default the
+vscode.dev / github.dev extension host), allowing `GET`/`POST` with `Authorization` and `Content-Type`. No
+credentials mode: send the token in the header.
+
 ## 2. Endpoints
 
 ### `GET /api/v1/me`

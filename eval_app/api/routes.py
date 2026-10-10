@@ -14,8 +14,10 @@ from ..models import Audit, Finding, Project, Repository
 from ..projects import repositories as repo_service
 from ..security.tenancy import get_scoped_or_404, scoped_select
 from .auth import api_auth
+from .cors import add_cors_headers
 
 bp = Blueprint("api", __name__, url_prefix="/api/v1")
+bp.after_request(add_cors_headers)
 
 
 def _audit_json(a: Audit, detail: bool = False) -> dict:

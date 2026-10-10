@@ -1,0 +1,142 @@
+{
+  "name": "eval-auditor",
+  "displayName": "eVal",
+  "description": "eVal code-audit findings in your editor: diagnostics, hover explanations, triage quick fixes and one-click audits. Works in VS Code desktop, Codespaces and vscode.dev.",
+  "version": "0.1.0",
+  "publisher": "randy-rebucas",
+  "license": "SEE LICENSE IN LICENSE.md",
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#0a0d10",
+    "theme": "dark"
+  },
+  "homepage": "https://github.com/randy-rebucas/eVal/tree/main/ide/vscode#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/randy-rebucas/eVal.git",
+    "directory": "ide/vscode"
+  },
+  "bugs": {
+    "url": "https://github.com/randy-rebucas/eVal/issues"
+  },
+  "keywords": [
+    "security",
+    "code audit",
+    "sast",
+    "findings",
+    "sarif",
+    "code review"
+  ],
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Linters",
+    "Testing",
+    "Other"
+  ],
+  "main": "./dist/node/extension.js",
+  "browser": "./dist/web/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "capabilities": {
+    "virtualWorkspaces": true,
+    "untrustedWorkspaces": {
+      "supported": true,
+      "description": "eVal only reads findings from the eVal server; it never runs workspace code."
+    }
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "eval.signIn",
+        "title": "Sign In",
+        "category": "eVal"
+      },
+      {
+        "command": "eval.signOut",
+        "title": "Sign Out",
+        "category": "eVal"
+      },
+      {
+        "command": "eval.linkRepository",
+        "title": "Link Workspace to Repository",
+        "category": "eVal"
+      },
+      {
+        "command": "eval.refresh",
+        "title": "Load Latest Findings",
+        "category": "eVal",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "eval.runAudit",
+        "title": "Run Audit on Current Branch",
+        "category": "eVal"
+      },
+      {
+        "command": "eval.openAudit",
+        "title": "Open Audit in Browser",
+        "category": "eVal"
+      },
+      {
+        "command": "eval.clear",
+        "title": "Clear Findings",
+        "category": "eVal"
+      },
+      {
+        "command": "eval.menu",
+        "title": "Show Menu",
+        "category": "eVal"
+      }
+    ],
+    "configuration": {
+      "title": "eVal",
+      "properties": {
+        "eval.serverUrl": {
+          "type": "string",
+          "default": "http://localhost:8000",
+          "description": "Base URL of the eVal server (no /api/v1 suffix)."
+        },
+        "eval.minimumSeverity": {
+          "type": "string",
+          "enum": [
+            "critical",
+            "high",
+            "medium",
+            "low",
+            "info"
+          ],
+          "default": "info",
+          "description": "Hide findings below this severity."
+        },
+        "eval.refreshOnStartup": {
+          "type": "boolean",
+          "default": true,
+          "description": "Load the latest findings when the workspace opens and when the checked-out commit changes."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "bundle": "npm run bundle:node && npm run bundle:web",
+    "bundle:node": "esbuild src/extension.ts --bundle --outfile=dist/node/extension.js --platform=node --format=cjs --target=node18 --external:vscode --sourcemap",
+    "bundle:web": "esbuild src/extension.ts --bundle --outfile=dist/web/extension.js --platform=browser --format=cjs --target=es2022 --external:vscode --sourcemap",
+    "compile": "tsc -p . && npm run bundle",
+    "watch": "npm run bundle:node -- --watch",
+    "test": "tsc -p . && node --test \"out/test/**/*.test.js\"",
+    "vscode:prepublish": "npm run bundle",
+    "package": "vsce package --no-dependencies -o eval-auditor.vsix",
+    "publish:marketplace": "vsce publish --no-dependencies --packagePath eval-auditor.vsix",
+    "publish:openvsx": "ovsx publish eval-auditor.vsix"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "~1.90.0",
+    "@vscode/vsce": "^3.6.0",
+    "esbuild": "^0.25.0",
+    "ovsx": "^0.10.0",
+    "typescript": "^5.4.0"
+  }
+}

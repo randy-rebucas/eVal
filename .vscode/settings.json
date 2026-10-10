@@ -1,0 +1,4 @@
+{
+  // Local dev server (README: flask --app wsgi run --port 5000). The Docker quick start serves on :8000.
+  "eval.serverUrl": "http://localhost:5000"
+}

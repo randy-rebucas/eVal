@@ -1,0 +1,24 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "eVal extension",
+      "type": "extensionHost",
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}/ide/vscode", "${workspaceFolder}"],
+      "outFiles": ["${workspaceFolder}/ide/vscode/dist/**/*.js"],
+      "preLaunchTask": "eval-extension: compile"
+    },
+    {
+      // Runs the browser build in a web worker, as on vscode.dev / github.dev (no Node APIs, no git extension).
+      "name": "eVal extension (web worker)",
+      "type": "extensionHost",
+      "debugWebWorkerHost": true,
+      "request": "launch",
+      "args": ["--extensionDevelopmentPath=${workspaceFolder}/ide/vscode", "--extensionDevelopmentKind=web",
+               "${workspaceFolder}"],
+      "outFiles": ["${workspaceFolder}/ide/vscode/dist/**/*.js"],
+      "preLaunchTask": "eval-extension: compile"
+    }
+  ]
+}

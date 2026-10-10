@@ -72,6 +72,12 @@ are on. Open redirects are blocked on login. Production refuses to start without
 log (`audit_events`) records logins, membership, credential, AI-settings, export, and issue-creation actions
 without secrets.
 
+CORS is enabled only on `/api/v1` and only for `EVAL_API_CORS_ORIGINS` (default: the vscode.dev / github.dev web
+extension host, `https://*.vscode-cdn.net`, plus `vscode.dev` and `github.dev`), so the VS Code extension works in
+browser-hosted editors. `Access-Control-Allow-Credentials` is never sent and the API ignores cookies, so a
+cross-origin page cannot act as a signed-in user; it needs a bearer token it already holds. Web routes never send
+CORS headers. Set `EVAL_API_CORS_ORIGINS=` (empty) to disable.
+
 ## 5. AI-specific controls
 
 * Disabled by default, per organization, admin-only to enable.

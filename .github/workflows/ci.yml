@@ -37,3 +37,20 @@ jobs:
           FLASK_APP: wsgi
           TEST_DATABASE_URL: sqlite:///${{ runner.temp }}/ci.db
         run: flask db upgrade && flask db check
+
+  vscode-extension:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: ide/vscode
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Install
+        run: npm ci --no-audit --no-fund
+      - name: Compile and test
+        run: npm test
+      - name: Bundle desktop and web builds
+        run: npm run bundle
