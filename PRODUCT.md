@@ -32,6 +32,7 @@ Each of those concerns maps to concrete checks:
 | Concern | Where eVal checks it |
 |---|---|
 | Security vulnerabilities | `secrets`, `taint` (incl. deserialization and upload paths), `api_security` (CORS, JWT, debug mode, CSRF, cookie flags, credentials in logs, upload validation, login rate limiting), Bandit, Semgrep, Trivy. Pattern matches stay *potential* until a traced data flow or the pattern itself proves the weakness |
+| Authentication and sessions | `auth_security`, driven by the application profile (framework, auth scheme, datastore, password columns in the ORM/Prisma/SQL schema): CSRF for cookie-authenticated Django/Express/Flask apps only, JWT secrets/expiry/algorithm pinning, unhashed password storage and plaintext comparison, MongoDB operator injection. The report lists which checks applied and why |
 | Authorization flaws | `api_security`: unauthenticated state-changing routes, object lookups by URL id without an ownership check (IDOR), mass assignment |
 | Architectural problems | `architecture`: import cycles, fan-out, config sprawl, SQL in handlers |
 | Poor database design | `database`: missing primary keys, money stored as floats, natural keys without unique constraints, unindexed foreign keys, missing migrations |

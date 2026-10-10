@@ -34,6 +34,7 @@ def _load_builtin() -> None:
         ai_code,
         api_security,
         architecture,
+        auth_security,
         bandit,
         configuration,
         database,

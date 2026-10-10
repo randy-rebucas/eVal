@@ -67,6 +67,9 @@ DESERIALIZE = Sink("taint.insecure-deserialization", "Insecure deserialization: 
                    "with an HMAC and verify before decoding.")
 YAML_LOAD = Sink("taint.insecure-yaml-load", "Insecure deserialization: request data is loaded with an unsafe YAML "
                  "loader", Severity.CRITICAL, "CWE-502", "Use yaml.safe_load() (or Loader=yaml.SafeLoader).")
+NOSQL = Sink("taint.nosql-injection", "NoSQL injection: request JSON is used in a MongoDB query", Severity.HIGH,
+             "CWE-943", "JSON values can be objects such as {\"$ne\": null}: cast each value to str/int (or validate "
+             "with a schema such as pydantic) before it goes into a filter, and never pass request data to $where.")
 UPLOAD = Sink("taint.upload-path-traversal", "Uploaded file saved under a client-supplied file name", Severity.HIGH,
               "CWE-22", "Never build the destination from the client's file name: generate a server-side name "
               "(uuid4 plus an allow-listed extension) or pass it through werkzeug.utils.secure_filename(), and save "
@@ -79,7 +82,12 @@ HTTP_FUNCS = {"get", "post", "put", "patch", "delete", "head", "options", "reque
 HTTP_MODULES = {"requests", "httpx", "urllib", "request", "session", "client", "http", "aiohttp"}
 PICKLE_MODULES = {"pickle", "cPickle", "_pickle", "marshal", "dill", "jsonpickle", "shelve", "cloudpickle"}
 PICKLE_FUNCS = {"loads", "load", "decode", "Unpickler", "open"}
-SAFE_YAML_LOADERS = {"SafeLoader", "CSafeLoader", "BaseLoader", "CBaseLoader", "FullLoader", "CFullLoader"}
+MONGO_METHODS = {"find", "find_one", "find_one_and_update", "find_one_and_delete", "find_one_and_replace", "update_one",
+                 "update_many", "delete_one", "delete_many", "replace_one", "count_documents", "distinct", "aggregate"}
+# Only JSON bodies carry objects; query-string and form values reach the handler as strings.
+JSON_ORIGINS = ("request.json", "request.get_json", "request.data", "request.body")
+NOSQL_CASTS = {"str", "int", "float", "bool", "ObjectId", "escape"}
+SAFE_YAML_LOADERS ={"SafeLoader", "CSafeLoader", "BaseLoader", "CBaseLoader", "FullLoader", "CFullLoader"}
 
 
 def _name(node) -> str:
@@ -134,6 +142,8 @@ class _Function:
             if fname in ("str", *PROPAGATING_FUNCS) and node.args:
                 return self.source(node.args[0])
             return None
+        if isinstance(node, ast.Await):  # body = await request.json() (Starlette/FastAPI)
+            return self.source(node.value)
         if isinstance(node, ast.IfExp):
             if _is_validation(node.test):  # `x if is_safe(x) else default` / `x if x.startswith("/") else ...`
                 return self.source(node.orelse)
@@ -174,7 +184,24 @@ class _Function:
                 break
 
     # ---------------------------------------------------------------- sinks
-    def sinks(self):
+    def _mongo_filter(self, node):
+        """The part of a MongoDB filter that carries request JSON (or any request data under ``$where``)."""
+        def json_tainted(value) -> bool:
+            if isinstance(value, ast.Call) and _name(value.func) in NOSQL_CASTS:
+                return False
+            origin = self.source(value)
+            return bool(origin) and origin[0].startswith(JSON_ORIGINS)
+
+        if isinstance(node, ast.Dict):
+            for k, v in zip(node.keys, node.values, strict=False):
+                if isinstance(k, ast.Constant) and k.value == "$where" and self.source(v):
+                    return v
+                if json_tainted(v):
+                    return v
+            return None
+        return node if json_tainted(node) else None
+
+    def sinks(self, mongo: bool = False):
         for node in ast.walk(self.func):
             if not isinstance(node, ast.Call):
                 continue
@@ -204,6 +231,10 @@ class _Function:
                 hit = (YAML_LOAD, first)
             elif fname == "save" and isinstance(node.func, ast.Attribute) and first is not None:
                 hit = (UPLOAD, first)  # FileStorage.save(dst) / storage.save(name, content)
+            elif mongo and fname in MONGO_METHODS and isinstance(node.func, ast.Attribute) and first is not None:
+                part = self._mongo_filter(first)
+                if part is not None:
+                    hit = (NOSQL, part)
             elif file_call and first is not None:
                 hit = (PATH, first)
             elif fname in HTTP_FUNCS and root in HTTP_MODULES and (first is not None or "url" in kw):
@@ -298,6 +329,7 @@ class TaintAnalyzer(Analyzer):
 
     def run(self, ctx: AnalyzerContext):
         findings = []
+        mongo = "mongodb" in ctx.profile.datastores  # NoSQL sinks only where MongoDB is the data store
         for rel in ctx.python_files():
             if is_test_path(rel):
                 continue
@@ -310,7 +342,7 @@ class TaintAnalyzer(Analyzer):
                 if not analysis.tainted and not any(_root(n) == "request" for n in ast.walk(func)
                                                     if isinstance(n, ast.Attribute)):
                     continue
-                for sink, call, (origin, src_line), chain in analysis.sinks():
+                for sink, call, (origin, src_line), chain in analysis.sinks(mongo):
                     via = " → ".join(dict.fromkeys(chain)) if chain else "directly"
                     trace = f"{origin} (line {src_line}) → {via} → {_name(call.func)}() (line {call.lineno})"
                     findings.append(self.finding(

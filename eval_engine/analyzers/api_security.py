@@ -401,7 +401,7 @@ class APISecurityAnalyzer(Analyzer):
                                        Severity.MEDIUM, Confidence.HIGH, FindingKind.CONFIRMED,
                                        "A wildcard host enables Host-header attacks (password reset poisoning, cache "
                                        "poisoning).", "List the exact hostnames served.", rel, node.lineno))
-        if "flask_login" in text and "request.form" in text and not re.search(
+        if ctx.profile.cookie_auth and "flask_login" in text and "request.form" in text and not re.search(
                 r"(CSRFProtect|flask_wtf|FlaskForm|csrf)", text):
             out.append(self._f(ctx, "api.flask-no-csrf", "Cookie-authenticated form handling without CSRF "
                                "protection", Severity.MEDIUM, Confidence.LOW, FindingKind.POTENTIAL,
