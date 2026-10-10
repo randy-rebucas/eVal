@@ -42,7 +42,10 @@ indicators, and categories it could not assess are shown as *not assessed*.
   (an application profile of framework, auth scheme, datastore and password schema decides whether CSRF, JWT,
   password-storage and NoSQL-injection checks apply; the report shows the profile and why each applies),
   database access and schema design, DevOps/CI and observability (metrics, tracing, request ids, logging),
-  testing, dependencies, maintainability (including swallowed errors), architecture (import cycles), performance
+  testing, dependencies, maintainability (including swallowed errors), **architecture** (module and package
+  cycles, coupling, dependency direction between layers, service and feature boundaries, business logic and
+  database access in request handlers, scattered data access, oversized modules and packages, flat layouts,
+  duplicated business logic, configuration sprawl), performance
   and scalability (static estimates), **configuration assumptions** (undocumented environment variables,
   hardcoded local endpoints and paths, APIs without an OpenAPI contract), **taint analysis** (request data
   reaching SQL, shell, eval, file paths, upload destinations, pickle/YAML deserialization, outbound URLs,
