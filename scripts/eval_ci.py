@@ -73,7 +73,8 @@ def main(argv=None) -> int:
     g.add_argument("--pr", type=int, help="pull request number")
     g.add_argument("--ref", help="branch, tag or commit SHA (default: repository default branch)")
     g.add_argument("--archive", help="upload this .zip of the checkout (for upload-type repositories)")
-    p.add_argument("--fail-on", choices=SEVERITIES[:4] + ["never"], default="high")
+    p.add_argument("--fail-on", choices=SEVERITIES[:4] + ["never", "policy"], default="high",
+                   help="severity threshold, or 'policy' to use the gate of the policy configured in eVal")
     p.add_argument("--timeout", type=int, default=1800, help="seconds to wait for the audit")
     p.add_argument("--sarif", help="write a SARIF report to this path (for code-scanning upload)")
     p.add_argument("--comment", action="store_true", help="post a summary comment on the PR")
@@ -139,6 +140,13 @@ def main(argv=None) -> int:
         print(f"  [{f['severity'].upper():8}] {f['title']}  {loc}")
     if args.fail_on == "never":
         return 0
+    if args.fail_on == "policy":
+        gate = audit.get("gate") or {}
+        for reason in gate.get("reasons", []):
+            print(f"gate: {reason}", file=sys.stderr)
+        print("PASS: policy gate passed." if gate.get("passed") else "FAIL: policy gate failed.",
+              file=sys.stdout if gate.get("passed") else sys.stderr)
+        return 0 if gate.get("passed") else 1
     threshold = SEVERITIES.index(args.fail_on)
     blocking = [f for f in findings if SEVERITIES.index(f["severity"]) <= threshold]
     if blocking:

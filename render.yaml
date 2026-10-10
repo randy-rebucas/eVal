@@ -39,6 +39,18 @@ services:
         generateValue: true
       - key: EVAL_ENCRYPTION_KEYS   # Fernet key; paste the output of: python -m eval_app.security.crypto
         sync: false
+      - key: GITHUB_OAUTH_CLIENT_ID      # "Connect GitHub"; callback https://YOUR-HOST/integrations/github/callback
+        sync: false
+      - key: GITHUB_OAUTH_CLIENT_SECRET
+        sync: false
+      - key: AUTH_GOOGLE_CLIENT_ID       # social sign-in; callback https://YOUR-HOST/login/google/callback
+        sync: false
+      - key: AUTH_GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: AUTH_LINKEDIN_CLIENT_ID     # callback https://YOUR-HOST/login/linkedin/callback
+        sync: false
+      - key: AUTH_LINKEDIN_CLIENT_SECRET
+        sync: false
       - key: EVAL_DATA_DIR
         value: /data
       - key: EVAL_WORK_DIR          # checkouts are temporary; keep them off the disk

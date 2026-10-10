@@ -149,7 +149,7 @@ def test_audit_with_ai_stores_labelled_explanations(ai_enabled, db):
     page = c.get(f"/o/{org}/audits/{audit.id}").data.decode()
     assert "AI-assisted architectural summary" in page and "does not affect scores" in page
     detail = c.get(f"/o/{org}/findings/{explained[0].id}").data.decode()
-    assert "AI-generated" in detail and "never modifies your code" in detail
+    assert "AI-generated" in detail and "illustrative" in detail
     assert "&lt;b&gt;why&lt;/b&gt;" in detail  # model output is escaped
 
 

@@ -15,7 +15,7 @@ snippets of already-detected findings, and are not used in local mode.
 | Mode | Internet needed? |
 |---|---|
 | `eval-audit PATH --offline --ai local` | **No.** Everything runs on the machine; outbound connections from eVal are blocked and counted |
-| `eval-audit PATH --ai local` | Only for OSV.dev, Semgrep registry rules and the Trivy database (metadata in, package versions out) |
+| `eval-audit PATH --ai local` | Only for OSV.dev, the PyPI/npm package registries, Semgrep registry rules and the Trivy database (metadata in, package names and versions out) |
 | `eval-audit PATH` (defaults) | Same as above |
 | Web app | Yes: browser UI assets from a CDN, GitHub for repositories, optional cloud AI |
 | Installation | Yes, once: Python packages, optional tools, the Trivy database, the local model |
@@ -27,7 +27,7 @@ snippets of already-detected findings, and are not used in local mode.
 | Component | What it does |
 |---|---|
 | Workspace, ZIP extraction, language detection | Reads files; never executes repository code |
-| Built-in analyzers: `secrets`, `api_security`, `database`, `devops`, `testing`, `dependencies` (hygiene), `maintainability`, `architecture`, `performance` | Pure Python static checks |
+| Built-in analyzers: `secrets`, `api_security`, `database`, `devops`, `testing`, `dependencies` (hygiene), `maintainability`, `architecture`, `performance`, `ai_code` (undeclared imports, lookalike package names from a bundled list, stubs, placeholders, hollow tests) | Pure Python static checks |
 | `ruff`, `bandit`, `mypy`, `eslint`, `tsc` | Installed tools run in the sandbox; no network use |
 | Deduplication, fingerprints, scoring, lifecycle | Deterministic, local |
 | Reports: Markdown, HTML, JSON, SARIF | Self-contained files; the HTML report has inline CSS and loads nothing |
@@ -39,6 +39,7 @@ snippets of already-detected findings, and are not used in local mode.
 | Component | Destination | Sent | Received | Offline (`--offline`) |
 |---|---|---|---|---|
 | `osv` | `api.osv.dev` | Ecosystem, package name and version of pinned dependencies. No source code | Advisories | Skipped (reported as not assessed). Disable anytime with `EVAL_OSV_ENABLED=0` |
+| `registry` | `pypi.org`, `registry.npmjs.org` | Names of declared dependencies (one request per package, at most 300). No source code, no versions | Whether the package exists and when it was first published | Skipped (reported as not assessed). Also skipped when the project configures a private index. Disable anytime with `EVAL_REGISTRY_CHECK_ENABLED=0` |
 | `semgrep` | `semgrep.dev` | Rule-pack request only; metrics and version check are off | Rules (`p/default`) | Runs if `EVAL_SEMGREP_CONFIG` is a local rules path, otherwise skipped |
 | `trivy` | `mirror.gcr.io`, `ghcr.io` | Database download requests only | Vulnerability, Java and checks databases | Runs on a pre-seeded `EVAL_TRIVY_CACHE_DIR` (with update and online lookups disabled), otherwise skipped |
 | Cloud AI (web app only): Anthropic, OpenAI | `api.anthropic.com`, `api.openai.com` | Redacted titles, descriptions and evidence snippets of a capped number of detected findings (default 15), language profile, scores. Never whole files | Explanations, summary | Not available in the CLI; the CLI supports local AI only |
@@ -53,8 +54,9 @@ they are kept offline by the flags above or skipped, not by that guard.
 |---|---|---|---|
 | PostgreSQL, Redis | Your own servers (`postgres`, `redis` in Compose) | Always | Not internet; required infrastructure |
 | GitHub API | `api.github.com` or `GITHUB_API_URL` (GitHub Enterprise) | Connecting repositories, listing branches and commits, PR audits, creating issues and PR comments | Token sent only to the host it was issued for |
+| GitHub App (optional) | Inbound: GitHub → `https://YOUR-HOST/webhooks/github`. Outbound: `api.github.com` | Pull request, push, check-run and installation events | Deliveries are rejected unless signed with `GITHUB_APP_WEBHOOK_SECRET` (HMAC-SHA256). Outbound calls mint one-hour installation tokens and create/update check runs |
 | Git fetch | `github.com` or hosts in `EVAL_GIT_ALLOWED_HOSTS` | Auditing a connected repository | HTTPS only, shallow fetch of one ref. ZIP uploads need no network |
-| Analyzers | As in the engine table above | Every audit | The worker has no `--offline` switch; use `EVAL_OSV_ENABLED=0`, a local `EVAL_SEMGREP_CONFIG` and a persistent `EVAL_TRIVY_CACHE_DIR` for air-gapped installs |
+| Analyzers | As in the engine table above | Every audit | The worker has no `--offline` switch; use `EVAL_OSV_ENABLED=0`, `EVAL_REGISTRY_CHECK_ENABLED=0`, a local `EVAL_SEMGREP_CONFIG` and a persistent `EVAL_TRIVY_CACHE_DIR` for air-gapped installs |
 | AI providers | `api.anthropic.com`, `api.openai.com`, or an OpenAI-compatible URL in `EVAL_AI_ALLOWED_BASE_URLS` | Only when an org enables AI | A local model gateway (e.g. `http://ollama:11434/v1`) keeps AI on your own infrastructure |
 | Browser UI assets | `cdn.jsdelivr.net` (Bootstrap 5.3.3, Bootstrap Icons 1.11.3) | Loaded by the user's browser on every page | Pinned versions with Subresource Integrity hashes; the CSP allows only those package paths. Without internet the UI still works but is unstyled; self-host these files for air-gapped use |
 | CI script (`scripts/eval_ci.py`) | Your eVal server (`EVAL_URL`) | In CI | HTTPS required except for localhost |

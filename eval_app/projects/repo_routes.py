@@ -10,7 +10,7 @@ from wtforms.validators import DataRequired, Length
 from ..audits.services import AuditError, create_audit, create_pr_audit
 from ..extensions import db
 from ..integrations.github import GitHubError
-from ..integrations.services import github_client, org_credentials
+from ..integrations.services import CredentialError, github_oauth_enabled, org_credentials, repo_client
 from ..models import Audit, Project, Repository
 from ..security import ratelimit
 from ..security.tenancy import get_scoped_or_404, org_required, require_role
@@ -96,18 +96,24 @@ def new(org_slug, project_id):
                 flash(str(exc), "danger")
             else:
                 return redirect(url_for("audits.detail", org_slug=org_slug, audit_id=audit.id))
-    browse = _browse(project)
+    choices = _credential_choices()
+    browse = _browse(project, choices)
     return render_template("repos/new.html", project=project, gh_form=gh_form, up_form=up_form,
-                           credential_choices=_credential_choices(), bulk_form=BulkConnectForm(), **browse)
+                           credential_choices=choices, bulk_form=BulkConnectForm(),
+                           can_connect=g.membership.role in ("admin", "owner"),
+                           gh_oauth=github_oauth_enabled(), **browse)
 
 
-def _browse(project):
-    """Repository listing for ``?browse=1&credential_id=…&owner=…``; empty unless asked for."""
+def _browse(project, choices):
+    """Repository listing for ``?browse=1&credential_id=…&owner=…``. Admins with a connected GitHub account
+    see the newest one's repositories straight away."""
     a = request.args
     out = {"browse_cred": a.get("credential_id", ""), "browse_owner": a.get("owner", "").strip()[:100],
            "gh_repos": None, "browse_error": None}
     if not a.get("browse"):
-        return out
+        if request.method != "GET" or len(choices) < 2:
+            return out
+        out["browse_cred"] = choices[-1][0]
     if out["browse_cred"] and g.membership.role not in ("admin", "owner"):
         out["browse_error"] = "Only admins can browse with an organization credential."
     elif not ratelimit.hit("gh-browse", str(g.org.id), 30, 300):
@@ -133,11 +139,11 @@ def detail(org_slug, repo_id):
     selected_branch = request.args.get("branch") or repo.default_branch
     if repo.source == "github":
         try:
-            client = github_client(repo.credential)
+            client = repo_client(repo)
             branches = client.list_branches(repo.full_name)
             if selected_branch:
                 commits = client.list_commits(repo.full_name, selected_branch, limit=15)
-        except (GitHubError, repo_service.RepositoryError) as exc:
+        except (GitHubError, CredentialError, repo_service.RepositoryError) as exc:
             gh_error = str(exc)
     return render_template(
         "repos/detail.html", repo=repo, audits=audits, branches=branches, commits=commits, gh_error=gh_error,
@@ -213,6 +219,26 @@ def set_credential(org_slug, repo_id):
     except repo_service.RepositoryError as exc:
         db.session.rollback()
         flash(str(exc), "danger")
+    return redirect(url_for("repos.detail", org_slug=org_slug, repo_id=repo.id))
+
+
+@bp.post("/repos/<repo_id>/automation")
+@org_required("admin")
+def automation(org_slug, repo_id):
+    from ..audits.schedule import SCHEDULES
+    from ..security import events
+
+    repo = get_scoped_or_404(Repository, repo_id)
+    schedule = request.form.get("schedule", "off")
+    if schedule not in SCHEDULES:
+        abort(400)
+    repo.schedule = schedule
+    if repo.source == "github":
+        repo.auto_audit = request.form.get("auto_audit") == "on"
+    events.record("repository.automation", organization_id=g.org.id, target=repo, schedule=schedule,
+                  auto_audit=repo.auto_audit)
+    db.session.commit()
+    flash("Automation settings saved.", "success")
     return redirect(url_for("repos.detail", org_slug=org_slug, repo_id=repo.id))
 
 

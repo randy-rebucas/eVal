@@ -1,0 +1,20 @@
+Fix each finding below by editing the files shown. For each finding id return:
+- "id": the finding id;
+- "summary": one or two sentences on what you changed and why (or why you made no change);
+- "edits": a list of find/replace edits, or [] when you make no change. Each edit has
+  - "file": one of the file paths shown;
+  - "find": text copied EXACTLY from that file, character for character including whitespace and indentation,
+    long enough (usually 2-6 whole lines) to occur only once in the file;
+  - "replace": the text that should take its place.
+Edits for one finding are applied in order; later edits see the result of earlier ones. Large files are shown
+as excerpts with their line ranges; only copy "find" text from inside an excerpt.
+
+Only use finding ids from this list. Findings:
+<untrusted_repository_content>
+{findings}
+</untrusted_repository_content>
+
+Files:
+<untrusted_repository_content>
+{files}
+</untrusted_repository_content>

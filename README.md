@@ -30,18 +30,35 @@ indicators, and categories it could not assess are shown as *not assessed*.
 - Users, organizations, roles (viewer/member/admin/owner), projects, tenant isolation on every query
 - GitHub repositories (public, or private via encrypted tokens) with branch/commit selection; ZIP uploads
 - Asynchronous audits on Celery + Redis with live progress and cancellation
-- 17 analyzers: Ruff, Bandit, mypy, ESLint, TypeScript, Semgrep, Trivy, OSV.dev, and built-in checks for
-  secrets, API security, database access, DevOps/CI, testing, dependencies, maintainability, architecture
-  (import cycles) and performance (static estimates). Missing tools are reported, never silently skipped.
+- 20 analyzers: Ruff, Bandit, mypy, ESLint, TypeScript, Semgrep, Trivy, OSV.dev, PyPI/npm registry checks, and
+  built-in checks for secrets, API security, database access, DevOps/CI, testing, dependencies, maintainability,
+  architecture (import cycles), performance (static estimates), **taint analysis** (request data reaching SQL,
+  shell, eval, file paths, outbound URLs, templates, redirects) and **AI-generated-code patterns** (hallucinated or
+  lookalike packages, undeclared imports, stubs, placeholders, tests that cannot fail). Missing tools are reported,
+  never silently skipped.
 - Findings with evidence, location, severity, confidence, type (confirmed / potential / estimate / AI), and
-  remediation; cross-tool deduplication and stable fingerprints
+  remediation; cross-tool deduplication and stable fingerprints; import **reachability** for vulnerable
+  dependencies (imported / declared but unused / transitive)
 - Deterministic, documented scoring; new / existing / recurring / resolved tracking; commit comparison
+- **Policies as code**: organization default ← repository override ← `.eval.toml`, with excluded paths, disabled
+  rules and analyzers, severity overrides, per-path gate thresholds and required analyzers
 - Triage with accountability: accepted risks need a reason, an owner (team or vendor, e.g. for third-party
   code) and a review date, carry over to later audits, and reopen when the date passes; an org-wide risk
   register lists them by review date. GitHub issue creation, HTML/Markdown/JSON/SARIF exports
-- Pull-request audits that gate only on findings introduced in changed files; CI script and offline CLI
+- **Compliance mapping** (CWE, OWASP Top 10, ASVS, SOC 2, ISO 27001) in every report and SARIF tag, and an
+  auditor-ready **evidence pack** (reports, CSVs, risk register, decision log, policy, SHA-256 manifest)
+- Pull-request audits that gate only on findings introduced in changed files, with a **change-risk score**
+  (size, sensitive areas, untested code, introduced findings); CI script and offline CLI
+- **GitHub App**: webhook-driven PR audits, check runs with inline annotations, default-branch re-audits on push,
+  short-lived installation tokens instead of personal access tokens
+- **Scheduled re-audits** (daily/weekly) and **regression alerts** to Slack, Teams or signed webhooks
 - Optional AI (Anthropic Claude, OpenAI, OpenAI-compatible local models) for explanations and remediation —
-  redacted inputs, validated outputs, never affects scores
+  redacted inputs, validated outputs, never affects scores. **AI fix pull requests** are re-audited before they can
+  be opened: the PR states whether every targeted finding is gone and nothing new was introduced
+- **In the coding loop**: `eval-audit hook` (Claude Code PostToolUse hook that makes the agent fix what it just
+  wrote), `eval-audit mcp` (MCP server for Claude Code, Cursor and other agents), `eval-audit --changed`
+- **Enterprise identity**: TOTP two-factor authentication (org-wide requirement), OIDC single sign-on (Okta,
+  Entra ID, Google Workspace) with enforcement, SCIM 2.0 provisioning, searchable and exportable audit log
 
 ## Quick start (Docker)
 
@@ -82,7 +99,7 @@ Optional JS/TS tools without a global install: `npm install --prefix .tools esli
 ## Testing and linting
 
 ```bash
-pytest                                  # SQLite in-memory; ~210 tests, ~45 s
+pytest                                  # SQLite in-memory; ~430 tests, ~90 s
 TEST_DATABASE_URL=postgresql+psycopg://eval:...@127.0.0.1:55450/eval_test pytest   # against PostgreSQL
 ruff check .
 bandit -r eval_app eval_engine scripts -c pyproject.toml
@@ -153,6 +170,20 @@ cache), reports them as *not assessed*, and blocks outbound connections from eVa
 were blocked. If the model server is not running, the audit still completes and the report says why AI is
 missing. AI output never changes scores. See [docs/LOCAL_AI.md](docs/LOCAL_AI.md).
 
+### Auto-fix
+
+With AI enabled, select findings on an audit (or open one finding) and choose **Fix with AI**. eVal asks the model
+for exact find/replace edits to the affected files (secrets masked), rejects any edit that does not match the code
+exactly once, and shows the result as a diff. From there, **Download .patch** (`git apply`) or, for GitHub
+repositories with a credential, **Open pull request**: eVal pushes a new `eval/fix-…` branch from the audited commit
+and opens a PR against the audited branch. Nothing is pushed before you click, and eVal never runs the code. Run
+your tests before merging.
+
+Before you see the diff, eVal **re-audits the patched code**: it applies the patch to the audited commit, re-runs
+the analyzers that worked in the original audit, and compares findings in the changed files. The verdict
+(*verified*, *partially verified*, *regressed*, *incomplete*) is shown on the fix page and written into the pull
+request. A fix that introduced new findings can only be opened after you confirm you reviewed them.
+
 ## Configuration
 
 All configuration is via environment variables (`.env.example` documents each). Key ones:
@@ -164,11 +195,16 @@ All configuration is via environment variables (`.env.example` documents each). 
 | `DATABASE_URL`, `REDIS_URL` | PostgreSQL and Redis |
 | `EVAL_GIT_ALLOWED_HOSTS` | hosts that may be cloned (default `github.com`; add your GitHub Enterprise host) |
 | `GITHUB_API_URL` | GitHub API; for Enterprise `https://HOST/api/v3` (repositories are then cloned from `HOST`) |
+| `GITHUB_OAUTH_CLIENT_ID`, `GITHUB_OAUTH_CLIENT_SECRET` | GitHub OAuth App behind the "Connect GitHub" button; callback URL `https://YOUR-HOST/integrations/github/callback` |
+| `AUTH_GITHUB_*`, `AUTH_GOOGLE_*`, `AUTH_LINKEDIN_*` (`_CLIENT_ID`, `_CLIENT_SECRET`) | social sign-in; callback `https://YOUR-HOST/login/<provider>/callback`. GitHub falls back to the `GITHUB_OAUTH_*` app |
 | `EVAL_PROXY_FIX_HOPS` | trusted reverse proxies in front of the app (set behind TLS termination) |
 | `EVAL_LOGIN_RATE_LIMIT`, `EVAL_LOGIN_IP_RATE_LIMIT`, `EVAL_MAX_ORGS_PER_USER` | abuse limits |
 | `EVAL_ACCEPTED_RISK_MAX_DAYS` | longest an accepted risk lasts before it reopens (default 365) |
 | `EVAL_WORKSPACE_MAX_*`, `EVAL_MAX_UPLOAD_MB`, `EVAL_ANALYZER_TIMEOUT_SECONDS` | resource limits |
+| `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_PRIVATE_KEY` (or `_FILE`), `GITHUB_APP_WEBHOOK_SECRET`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET` | GitHub App for automatic PR audits and check runs (see [docs/CI.md](docs/CI.md#c-github-app-automatic-pull-request-checks)) |
+| `EVAL_PUBLIC_URL` | public base URL, for links the worker builds (check runs, notifications) |
 | `EVAL_OSV_ENABLED` | dependency vulnerability lookup via OSV.dev (sends package names/versions only) |
+| `EVAL_REGISTRY_CHECK_ENABLED` | check that declared dependencies exist on PyPI/npm and are not brand new (sends package names only) |
 | `EVAL_SEMGREP_CONFIG` | Semgrep rules (registry pack or local path for air-gapped installs) |
 | `EVAL_TRIVY_CACHE_DIR` | persistent Trivy DB cache |
 | `EVAL_AI_ALLOWED_BASE_URLS` | allow-list for OpenAI-compatible endpoints (local models) |

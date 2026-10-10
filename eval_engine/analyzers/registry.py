@@ -31,6 +31,7 @@ def get(names: list[str] | None) -> list[Analyzer]:
 def _load_builtin() -> None:
     # Importing the modules triggers @register. Kept explicit so the set of analyzers is auditable.
     from . import (  # noqa: F401
+        ai_code,
         api_security,
         architecture,
         bandit,
@@ -44,6 +45,7 @@ def _load_builtin() -> None:
         ruff,
         secrets,
         semgrep,
+        taint,
         testing,
         trivy,
         tsc,

@@ -15,8 +15,9 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 @pytest.fixture(autouse=True)
 def _offline(monkeypatch):
-    """Tests never call OSV.dev; OSV tests inject a fake HTTP session explicitly."""
+    """Tests never call OSV.dev or the package registries; their tests inject a fake HTTP session explicitly."""
     monkeypatch.setenv("EVAL_OSV_ENABLED", "0")
+    monkeypatch.setenv("EVAL_REGISTRY_CHECK_ENABLED", "0")
 
 
 @pytest.fixture

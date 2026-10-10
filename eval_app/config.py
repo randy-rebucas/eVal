@@ -56,6 +56,28 @@ class BaseConfig:
     ]
 
     GITHUB_API_URL = os.environ.get("GITHUB_API_URL", "https://api.github.com")
+    # "Connect GitHub" sign-in (a GitHub OAuth App). Callback URL: https://YOUR-HOST/integrations/github/callback
+    GITHUB_OAUTH_CLIENT_ID = os.environ.get("GITHUB_OAUTH_CLIENT_ID", "")
+    GITHUB_OAUTH_CLIENT_SECRET = os.environ.get("GITHUB_OAUTH_CLIENT_SECRET", "")
+    # Social sign-in; each provider is offered once both values are set. Callback: https://YOUR-HOST/login/<p>/callback
+    # GitHub falls back to the GITHUB_OAUTH_* app above (register its callback as the site root to cover both).
+    # GitHub App (webhook-driven PR audits and check runs). Webhook URL: https://YOUR-HOST/webhooks/github;
+    # Setup URL (with "Request user authorization during installation"): https://YOUR-HOST/integrations/github/app/setup
+    GITHUB_APP_ID = os.environ.get("GITHUB_APP_ID", "")
+    GITHUB_APP_SLUG = os.environ.get("GITHUB_APP_SLUG", "")
+    GITHUB_APP_PRIVATE_KEY = os.environ.get("GITHUB_APP_PRIVATE_KEY", "")  # PEM; literal \n escapes are accepted
+    GITHUB_APP_PRIVATE_KEY_FILE = os.environ.get("GITHUB_APP_PRIVATE_KEY_FILE", "")
+    GITHUB_APP_WEBHOOK_SECRET = os.environ.get("GITHUB_APP_WEBHOOK_SECRET", "")
+    GITHUB_APP_CLIENT_ID = os.environ.get("GITHUB_APP_CLIENT_ID", "")
+    GITHUB_APP_CLIENT_SECRET = os.environ.get("GITHUB_APP_CLIENT_SECRET", "")
+    # Public base URL of this server, for links built outside a request (check runs, notifications).
+    PUBLIC_URL = os.environ.get("EVAL_PUBLIC_URL", "")
+    AUTH_GITHUB_CLIENT_ID = os.environ.get("AUTH_GITHUB_CLIENT_ID", "")
+    AUTH_GITHUB_CLIENT_SECRET = os.environ.get("AUTH_GITHUB_CLIENT_SECRET", "")
+    AUTH_GOOGLE_CLIENT_ID = os.environ.get("AUTH_GOOGLE_CLIENT_ID", "")
+    AUTH_GOOGLE_CLIENT_SECRET = os.environ.get("AUTH_GOOGLE_CLIENT_SECRET", "")
+    AUTH_LINKEDIN_CLIENT_ID = os.environ.get("AUTH_LINKEDIN_CLIENT_ID", "")
+    AUTH_LINKEDIN_CLIENT_SECRET = os.environ.get("AUTH_LINKEDIN_CLIENT_SECRET", "")
 
     # Operator allow-list for OpenAI-compatible AI endpoints (e.g. http://ollama:11434/v1). Prevents SSRF.
     AI_ALLOWED_BASE_URLS = os.environ.get("EVAL_AI_ALLOWED_BASE_URLS", "")

@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% from "_macros.html" import flash_notes %}
+{% block title %}Single sign-on{% endblock %}
+{% block flashes %}{% endblock %}
+{% block content %}
+<div class="auth">
+  <div class="auth-aside">
+    <h1>Single sign-on. <span>Use your company identity.</span></h1>
+    <p>Enter your work email; eVal sends you to your organization's identity provider (Okta, Microsoft Entra ID, Google Workspace, …).</p>
+  </div>
+  <div class="auth-card">
+    <div class="term-bar"><span class="term-dots" aria-hidden="true"><i></i><i></i><i></i></span><p class="term-title">eval://<b>auth/sso</b></p></div>
+    <form method="post" class="auth-form">
+      <h2>Sign in with SSO</h2>
+      {{ flash_notes() }}
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="mb-3"><label class="form-label" for="sso-email">Work email</label><input id="sso-email" name="email" type="email" class="form-control" required autofocus autocomplete="email"></div>
+      <button class="btn-ink auth-submit">Continue</button>
+    </form>
+    <p class="auth-alt"><a href="{{ url_for('auth.login') }}">Sign in with a password instead</a></p>
+  </div>
+</div>
+{% endblock %}

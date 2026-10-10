@@ -30,7 +30,7 @@ eval-audit ./repo --ai local --offline --format html -o report.html
 
 | Requirement | Status |
 |---|---|
-| Working product | 17 analyzers, deterministic scoring, Markdown/HTML/JSON/SARIF reports, CLI and web app |
+| Working product | 20 analyzers, deterministic scoring, Markdown/HTML/JSON/SARIF reports, CLI and web app |
 | AI | `Enricher` explains findings, suggests remediation and patches, rates false-positive likelihood and writes an architectural summary ([enrich.py](../eval_engine/ai/enrich.py)) |
 | Runs on the user's device | `eval-audit --ai local` against a model server on the same machine ([local.py](../eval_engine/ai/local.py)); loopback only, proxies ignored, no API key |
 | Fully offline | `eval-audit --offline` skips network-dependent checks and blocks outbound connections ([netguard.py](../eval_engine/netguard.py)); every connection eVal can make is declared in [NETWORK.md](NETWORK.md) |

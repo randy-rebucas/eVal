@@ -30,7 +30,7 @@
 {% set section = {
   'orgs.dashboard': 'dashboard', 'orgs.members': 'members', 'orgs.list_orgs': 'orgs',
   'findings.risks': 'risk-register', 'findings.detail': 'findings',
-  'integrations.tokens': 'api-tokens', 'integrations.index': 'integrations',
+  'integrations.tokens': 'api-tokens', 'integrations.index': 'integrations', 'auth.account': 'account',
 }.get(ep) or ep.split('.')[0] %}
 <div class="app">
   <aside class="side" id="side" aria-label="Sidebar">
@@ -51,6 +51,12 @@
       <p class="side-h">settings</p>
       <a href="{{ url_for('orgs.members', org_slug=g.org.slug) }}" {% if ep == 'orgs.members' %}aria-current="page"{% endif %}><i class="bi bi-people" aria-hidden="true"></i>Members</a>
       <a href="{{ url_for('integrations.index', org_slug=g.org.slug) }}" {% if ep == 'integrations.index' %}aria-current="page"{% endif %}><i class="bi bi-plug" aria-hidden="true"></i>Integrations</a>
+      {% if g.membership.role in ['admin', 'owner'] %}
+      <a href="{{ url_for('security_settings.security', org_slug=g.org.slug) }}" {% if ep == 'security_settings.security' %}aria-current="page"{% endif %}><i class="bi bi-shield-check" aria-hidden="true"></i>Security</a>
+      <a href="{{ url_for('security_settings.audit_log', org_slug=g.org.slug) }}" {% if ep == 'security_settings.audit_log' %}aria-current="page"{% endif %}><i class="bi bi-journal-text" aria-hidden="true"></i>Audit log</a>
+      {% endif %}
+      <a href="{{ url_for('integrations.notifications', org_slug=g.org.slug) }}" {% if ep == 'integrations.notifications' %}aria-current="page"{% endif %}><i class="bi bi-bell" aria-hidden="true"></i>Notifications</a>
+      <a href="{{ url_for('integrations.policy', org_slug=g.org.slug) }}" {% if ep == 'integrations.policy' %}aria-current="page"{% endif %}><i class="bi bi-sliders" aria-hidden="true"></i>Policy</a>
       <a href="{{ url_for('integrations.tokens', org_slug=g.org.slug) }}" {% if ep == 'integrations.tokens' %}aria-current="page"{% endif %}><i class="bi bi-key" aria-hidden="true"></i>API tokens</a>
     </nav>
     {% else %}
@@ -61,7 +67,7 @@
     {% endif %}
 
     <div class="side-foot">
-      <span class="side-email" title="{{ current_user.email }}"><i class="bi bi-person" aria-hidden="true"></i>{{ current_user.email }}</span>
+      <a class="side-email" href="{{ url_for('auth.account') }}" title="Account · {{ current_user.email }}" {% if ep == 'auth.account' %}aria-current="page"{% endif %}><i class="bi bi-person" aria-hidden="true"></i>{{ current_user.email }}</a>
       <div class="side-acts">
         <form method="post" action="{{ url_for('auth.logout') }}">
           <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

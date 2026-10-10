@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import shutil
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 from eval_app.models import Audit, Finding, IntegrationCredential, Repository, ResolvedFinding, Upload
 from tests.app.helpers import make_project, upload_new, zip_bytes
@@ -212,6 +213,62 @@ def test_browse_rejects_other_orgs_credential(alice, bob, db, fake_github):
     alice["client"].post(f"/o/{alice['org']}/projects/{pid}/repos/new",
                          data={"kind": "github_bulk", "credential_id": str(bob_cred.id), "repos": ["octo/shop"]})
     assert db.session.scalar(db.select(db.func.count(Repository.id))) == 0
+
+
+def _start_oauth(c, org, pid):
+    resp = c.get(f"/o/{org}/settings/github/connect?project_id={pid}")
+    assert resp.status_code == 302
+    query = parse_qs(urlsplit(resp.headers["Location"]).query)
+    assert resp.headers["Location"].startswith("https://github.com/login/oauth/authorize?")
+    assert query["scope"] == ["repo"] and query["client_id"] == ["cid"]
+    return query["state"][0]
+
+
+def test_connect_github_oauth_stores_token_and_lists_repos(app, alice, db, fake_github, monkeypatch):
+    app.config.update(GITHUB_OAUTH_CLIENT_ID="cid", GITHUB_OAUTH_CLIENT_SECRET="csecret")
+    exchanged = []
+
+    def fake_exchange(web_url, client_id, client_secret, code, redirect_uri):
+        exchanged.append((web_url, code, redirect_uri))
+        return "ghp_validtoken1234567890"
+
+    monkeypatch.setattr("eval_app.integrations.github.exchange_oauth_code", fake_exchange)
+    c, org = alice["client"], alice["org"]
+    pid = make_project(c, org)
+    state = _start_oauth(c, org, pid)
+
+    bad = c.get("/integrations/github/callback?code=abc&state=forged")
+    assert bad.status_code == 302 and not exchanged  # wrong state: no exchange, and the pending state is spent
+    state = _start_oauth(c, org, pid)
+    resp = c.get(f"/integrations/github/callback?code=abc&state={state}")
+    assert resp.status_code == 302 and f"/projects/{pid}/repos/new?browse=1" in resp.headers["Location"]
+    assert exchanged == [("https://github.com", "abc", "http://localhost/integrations/github/callback")]
+    cred = db.session.execute(db.select(IntegrationCredential)).scalar_one()
+    assert cred.label == "GitHub (octocat)" and b"validtoken" not in cred.encrypted_secret
+
+    page = c.get(f"/o/{org}/projects/{pid}/repos/new")  # newest account's repositories load straight away
+    assert b"octo/shop" in page.data and b"Connect another GitHub account" in page.data
+
+    state = _start_oauth(c, org, pid)  # reconnecting the same account updates the credential in place
+    c.get(f"/integrations/github/callback?code=def&state={state}")
+    assert db.session.scalar(db.select(db.func.count(IntegrationCredential.id))) == 1
+
+
+def test_connect_github_requires_config_admin_and_own_session(app, alice, bob, db, fake_github):
+    c, org = alice["client"], alice["org"]
+    pid = make_project(c, org)
+    resp = c.get(f"/o/{org}/settings/github/connect?project_id={pid}", follow_redirects=True)
+    assert b"not configured" in resp.data
+    app.config.update(GITHUB_OAUTH_CLIENT_ID="cid", GITHUB_OAUTH_CLIENT_SECRET="csecret")
+    state = _start_oauth(c, org, pid)
+    # Another user cannot finish alice's sign-in: the state lives in alice's session only.
+    bob["client"].get(f"/integrations/github/callback?code=abc&state={state}")
+    assert db.session.scalar(db.select(db.func.count(IntegrationCredential.id))) == 0
+    # A project id from another org falls back to the Integrations page rather than leaking a redirect.
+    resp = bob["client"].get(f"/o/{bob['org']}/settings/github/connect?project_id={pid}")
+    state = parse_qs(urlsplit(resp.headers["Location"]).query)["state"][0]
+    resp = bob["client"].get(f"/integrations/github/callback?error=access_denied&state={state}")
+    assert resp.headers["Location"].endswith(f"/o/{bob['org']}/settings/integrations")
 
 
 # ---------------------------------------------------------------------------------------- queue behaviour

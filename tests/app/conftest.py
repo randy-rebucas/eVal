@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import base64
+
 import pytest
 
 from eval_app.integrations.github import GitHubClient, GitHubError
+from tests.conftest import FIXTURES
 
 FAST = ["secrets", "devops", "api_security", "database", "testing"]
 
@@ -56,6 +59,20 @@ def fake_github(monkeypatch):
             issues.append(kwargs.get("json"))
             n = len(issues)
             return {"number": n, "html_url": f"https://github.com/octo/shop/issues/{n}"}
+        if path.startswith("/repos/octo/shop/contents/") and method == "GET":
+            rel = path[len("/repos/octo/shop/contents/"):]
+            src = FIXTURES / "vulnapp" / rel
+            if not src.is_file():
+                raise GitHubError("Not found on GitHub, or the credential lacks access.", 404)
+            data = src.read_bytes()
+            return {"type": "file", "size": len(data), "encoding": "base64", "sha": f"blob-{rel}",
+                    "content": base64.b64encode(data).decode()}
+        if path == "/repos/octo/shop/git/refs" or (path.startswith("/repos/octo/shop/contents/") and method == "PUT"):
+            writes.append((method, path, kwargs.get("json")))
+            return {}
+        if path == "/repos/octo/shop/pulls" and method == "POST":
+            writes.append((method, path, kwargs.get("json")))
+            return {"number": 7, "html_url": "https://github.com/octo/shop/pull/7"}
         if path == "/repos/octo/shop/pulls/5":
             return {"number": 5, "state": pull_state["state"], "title": "Add export",
                     "head": {"sha": "d" * 40, "ref": "feature/export"}, "base": {"ref": "main"}}
@@ -69,6 +86,7 @@ def fake_github(monkeypatch):
         raise AssertionError(path)
 
     comments: list[str] = []
+    writes: list[tuple] = []
     pull_state = {"state": "open"}
     monkeypatch.setattr(GitHubClient, "_request", fake_request)
-    return {"calls": calls, "issues": issues, "comments": comments, "pull_state": pull_state}
+    return {"calls": calls, "issues": issues, "comments": comments, "pull_state": pull_state, "writes": writes}

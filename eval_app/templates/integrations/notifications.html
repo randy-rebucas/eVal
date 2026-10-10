@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Notifications{% endblock %}
+{% block content %}
+<div class="page">
+  <header class="page-head">
+    <div>
+      <p class="trail">settings<span class="sep">/</span>notifications</p>
+      <h1 class="page-title"><i class="bi bi-bell" aria-hidden="true"></i> Notifications</h1>
+      <p class="page-lede">Get told when a branch audit regresses (score drop of 5+ points or new high/critical findings), a policy gate starts failing, or an audit fails. Pull requests report through check runs instead. Pair this with a <em>daily</em> or <em>weekly</em> schedule on each repository so new vulnerabilities in untouched code are caught.</p>
+    </div>
+  </header>
+
+  {% if new_secret %}
+  <div class="reveal" role="status">
+    <p>Signing secret for this webhook. Copy it now; it will not be shown again. Verify <code>X-Eval-Signature: sha256=HMAC_SHA256(secret, raw body)</code> on every delivery.</p>
+    <div class="lp-install mt-0"><code class="user-select-all">{{ new_secret }}</code></div>
+  </div>
+  {% endif %}
+
+  <div class="split">
+    <section class="pane" aria-labelledby="ch-h">
+      <div class="pane-bar"><h2 id="ch-h">Channels</h2><span class="pane-aside">{{ channels|length }} configured</span></div>
+      <div class="register-wrap">
+      <table class="register">
+        <thead><tr><th>Channel</th><th>Events</th><th>Last delivery</th>{% if can_manage %}<th><span class="visually-hidden">Actions</span></th>{% endif %}</tr></thead>
+        <tbody>
+        {% for c in channels %}
+          <tr>
+            <td class="reg-repo" data-label="Channel"><b>{{ c.label }}</b><span class="reg-sub d-block"><span class="tag">{{ c.kind }}</span> {{ c.url_host }}</span></td>
+            <td data-label="Events">{% for e in c.events %}<span class="tag">{{ e }}</span> {% endfor %}</td>
+            <td class="fig" data-label="Last delivery">{{ c.last_status or '—' }}</td>
+            {% if can_manage %}<td class="reg-act">
+              <form method="post" action="{{ url_for('integrations.test_channel', org_slug=g.org.slug, channel_id=c.id) }}" class="d-inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="act">Send test</button></form>
+              <form method="post" action="{{ url_for('integrations.delete_channel', org_slug=g.org.slug, channel_id=c.id) }}" class="d-inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="act act-danger" data-confirm="Remove this channel?" data-confirm-ok="Remove">Remove</button></form>
+            </td>{% endif %}
+          </tr>
+        {% else %}<tr><td colspan="4" class="empty">No channels yet.</td></tr>{% endfor %}
+        </tbody>
+      </table>
+      </div>
+    </section>
+    {% if can_manage %}
+    <section class="pane" aria-labelledby="nc-h">
+      <div class="pane-bar"><h2 id="nc-h"><span><i class="bi bi-plus-lg" aria-hidden="true"></i> Add channel</span></h2></div>
+      <div class="pane-body">
+        <form method="post" autocomplete="off" class="form-grid">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div><label class="form-label" for="nc-kind">Type</label><select id="nc-kind" name="kind" class="form-select">{% for k, label in kinds.items() %}<option value="{{ k }}">{{ label }}</option>{% endfor %}</select></div>
+          <div><label class="form-label" for="nc-label">Label</label><input id="nc-label" name="label" class="form-control" maxlength="120" placeholder="e.g. #security-alerts"></div>
+          <div><label class="form-label" for="nc-url">Webhook URL</label><input id="nc-url" name="url" type="url" class="form-control" required placeholder="https://hooks.slack.com/services/…"><p class="pane-note">Stored encrypted; only the host is shown.</p></div>
+          <fieldset><legend class="form-label">Events</legend>
+            {% for e, label in events.items() %}<div class="form-check"><input class="form-check-input" type="checkbox" name="events" value="{{ e }}" id="ev-{{ loop.index }}" checked><label class="form-check-label" for="ev-{{ loop.index }}">{{ label }}</label></div>{% endfor %}
+          </fieldset>
+          <div class="form-acts"><button class="btn-ink is-block">Add channel</button></div>
+        </form>
+      </div>
+    </section>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -50,6 +50,7 @@ class PipelineConfig:
     previous_fingerprints: PreviousState | None = None
     ai: Any = None  # eval_engine.ai.enrich.Enricher
     offline: bool = False  # skip analyzers that need network access (CLI --offline)
+    policy: Any = None  # eval_engine.policy.Policy: excluded paths, disabled rules/analyzers, severity overrides
 
 
 @dataclass
@@ -155,6 +156,8 @@ def run_pipeline(root: Path, config: PipelineConfig | None = None) -> AuditResul
                           offline=config.offline)
 
     analyzers = registry.get(config.analyzers)
+    if config.policy is not None and config.policy.disable_analyzers:
+        analyzers = [a for a in analyzers if a.name not in config.policy.disable_analyzers]
     outcomes: list[AnalyzerOutcome] = []
     for i, analyzer in enumerate(analyzers):
         progress(f"analyzing: {analyzer.title}", 15 + int(60 * i / max(len(analyzers), 1)), "")
@@ -170,6 +173,15 @@ def run_pipeline(root: Path, config: PipelineConfig | None = None) -> AuditResul
 
     fingerprint.compute(findings, source_line, family_of)
     findings = merge_duplicates(findings)
+    policy_stats = None
+    if config.policy is not None:
+        from .policy import apply as apply_policy
+
+        findings, effect = apply_policy(config.policy, findings)
+        policy_stats = {"digest": config.policy.digest, "sources": config.policy.sources, **effect.to_dict()}
+    from .reachability import annotate as annotate_reachability
+
+    reach = annotate_reachability(findings, ctx)
     prev = config.previous_fingerprints or PreviousState()
     lifecycle = classify(findings, prev.previous, prev.ever_seen)
 
@@ -194,6 +206,10 @@ def run_pipeline(root: Path, config: PipelineConfig | None = None) -> AuditResul
         "dropped_invalid": dropped,
         "duration_seconds": round(time.monotonic() - started, 2),
     }
+    if policy_stats is not None:
+        stats["policy"] = policy_stats
+    if reach:
+        stats["reachability"] = reach
     return AuditResult(
         findings=findings,
         scorecard=card,

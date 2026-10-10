@@ -7,8 +7,10 @@ from flask import Blueprint, Response, abort, flash, g, jsonify, redirect, rende
 from eval_engine.findings import CATEGORY_LABELS, SEVERITY_ORDER, Category
 from eval_engine.reports import CONTENT_TYPES, FORMATS, render
 
+from .. import ai_config, policies
 from ..extensions import db
 from ..findings import services as findings_service
+from ..fixes import services as fix_services
 from ..models import Audit
 from ..security import events
 from ..security.tenancy import get_scoped_or_404, org_required
@@ -43,6 +45,9 @@ def detail(org_slug, audit_id):
             severity_order=SEVERITY_ORDER,
             triaged_count=sum(1 for f in audit.findings if f.triage_status != "open"),
             pr=findings_service.pr_summary(audit) if audit.pr_number else None,
+            ai_fix=ai_config.ai_enabled(g.org.id),
+            fixes=fix_services.proposals_for(audit),
+            gate=policies.evaluate(audit),
         )
     return render_template("audits/detail.html", **ctx)
 
@@ -102,6 +107,22 @@ def report(org_slug, audit_id, fmt):
     # The HTML report carries its own inline CSS and no scripts.
     resp.headers["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'"
     events.record("report.exported", organization_id=g.org.id, target=audit, format=fmt)
+    db.session.commit()
+    return resp
+
+
+@bp.get("/<audit_id>/evidence.zip")
+@org_required()
+def evidence(org_slug, audit_id):
+    from .evidence import build
+
+    audit = get_scoped_or_404(Audit, audit_id)
+    if audit.status != "succeeded":
+        abort(404)
+    name = re.sub(r"[^A-Za-z0-9._-]+", "-", audit.repository.name)[:60]
+    resp = Response(build(audit), mimetype="application/zip")
+    resp.headers["Content-Disposition"] = f'attachment; filename="eval-evidence-{name}-{str(audit.id)[:8]}.zip"'
+    events.record("report.exported", organization_id=g.org.id, target=audit, format="evidence")
     db.session.commit()
     return resp
 

@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Security{% endblock %}
+{% block content %}
+<div class="page">
+  <header class="page-head">
+    <div>
+      <p class="trail">settings<span class="sep">/</span>security</p>
+      <h1 class="page-title"><i class="bi bi-shield-check" aria-hidden="true"></i> Security</h1>
+      <p class="page-lede">Sign-in requirements for <strong>{{ g.org.name }}</strong>, single sign-on, and user provisioning. Every change is recorded in the <a href="{{ url_for('security_settings.audit_log', org_slug=g.org.slug) }}">audit log</a>.</p>
+    </div>
+  </header>
+
+  {% if new_token %}
+  <div class="reveal" role="status">
+    <p>SCIM token — copy it into your identity provider now; it will not be shown again.</p>
+    <div class="lp-install mt-0"><code class="user-select-all">{{ new_token }}</code></div>
+  </div>
+  {% endif %}
+
+  <div class="split">
+    <div class="stack">
+      <section class="pane" aria-labelledby="mfa-h">
+        <div class="pane-bar"><h2 id="mfa-h"><span><i class="bi bi-phone" aria-hidden="true"></i> Two-factor authentication</span></h2></div>
+        <div class="pane-body">
+          <form method="post">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="form-check mb-2"><input class="form-check-input" type="checkbox" name="require_mfa" id="req-mfa" {% if g.org.require_mfa %}checked{% endif %}><label class="form-check-label" for="req-mfa">Require two-factor authentication for every member</label></div>
+            <p class="pane-note mt-0">Members satisfy it with an authenticator app, or by signing in through this organization's SSO. API tokens are not affected.</p>
+            <button class="act" name="action" value="mfa">Save</button>
+          </form>
+        </div>
+      </section>
+
+      <section class="pane" aria-labelledby="sso-h">
+        <div class="pane-bar"><h2 id="sso-h"><span><i class="bi bi-building-lock" aria-hidden="true"></i> Single sign-on (OpenID Connect)</span></h2>{% if conn %}<span class="pane-aside">{{ 'enabled' if conn.enabled else 'disabled' }}{% if conn.enforce %} · enforced{% endif %}</span>{% endif %}</div>
+        <div class="pane-body">
+          <p class="mb-2 small">In your IdP (Okta, Entra ID, Google Workspace, Keycloak, …) create an OIDC web application with redirect URI <code class="user-select-all">{{ callback_url }}</code>. Members sign in at <code class="user-select-all">{{ sso_url }}</code> or from the login page with their work email.</p>
+          <form method="post" class="form-grid" autocomplete="off">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div><label class="form-label" for="s-iss">Issuer URL</label><input id="s-iss" name="issuer" class="form-control" required value="{{ conn.issuer if conn else '' }}" placeholder="https://acme.okta.com"></div>
+            <div><label class="form-label" for="s-cid">Client ID</label><input id="s-cid" name="client_id" class="form-control" required value="{{ conn.client_id if conn else '' }}"></div>
+            <div><label class="form-label" for="s-sec">Client secret</label><input id="s-sec" name="client_secret" type="password" class="form-control" {% if not conn %}required{% endif %} placeholder="{{ 'unchanged' if conn else '' }}"></div>
+            <div><label class="form-label" for="s-dom">Email domains</label><input id="s-dom" name="domains" class="form-control" required value="{{ conn.domains|join(', ') if conn else '' }}" placeholder="acme.com, acme.io"><p class="pane-note">Only addresses in these domains can sign in through this IdP.</p></div>
+            <div><label class="form-label" for="s-role">Role for new members</label><select id="s-role" name="default_role" class="form-select">{% for r in ['viewer', 'member', 'admin'] %}<option {% if (conn.default_role if conn else 'member') == r %}selected{% endif %}>{{ r }}</option>{% endfor %}</select></div>
+            <div class="form-check"><input class="form-check-input" type="checkbox" name="auto_provision" id="s-auto" {% if not conn or conn.auto_provision %}checked{% endif %}><label class="form-check-label" for="s-auto">Create accounts on first sign-in</label></div>
+            <div class="form-check"><input class="form-check-input" type="checkbox" name="enforce" id="s-enf" {% if conn and conn.enforce %}checked{% endif %}><label class="form-check-label" for="s-enf">Require SSO for members (owners keep password access as break-glass)</label></div>
+            <div class="form-check"><input class="form-check-input" type="checkbox" name="enabled" id="s-en" {% if not conn or conn.enabled %}checked{% endif %}><label class="form-check-label" for="s-en">Enabled</label></div>
+            <div class="form-acts"><button class="btn-ink" name="action" value="sso">Save SSO</button>{% if conn %} <button class="act act-danger" name="action" value="sso_delete" formnovalidate data-confirm="Remove single sign-on? Members who only sign in through SSO lose access until it is set up again." data-confirm-ok="Remove">Remove</button>{% endif %}</div>
+          </form>
+          <p class="pane-note">SSO never takes over an existing eVal account: it signs in accounts it created or that were linked by their owner while signed in. SAML is not supported yet; most IdPs offer OIDC alongside SAML.</p>
+        </div>
+      </section>
+    </div>
+
+    <section class="pane" aria-labelledby="scim-h">
+      <div class="pane-bar"><h2 id="scim-h"><span><i class="bi bi-people" aria-hidden="true"></i> SCIM provisioning</span></h2></div>
+      <div class="pane-body">
+        <p class="small mb-2">Base URL: <code class="user-select-all">{{ scim_url }}</code> · Bearer token authentication. Users are added as members and removed when deactivated in your IdP; owners are never removed through SCIM.</p>
+        <form method="post" class="mb-3"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn-ink" name="action" value="scim_token"><i class="bi bi-plus-lg" aria-hidden="true"></i> New SCIM token</button></form>
+        <table class="register">
+          <thead><tr><th>Prefix</th><th>Created</th><th>Last used</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
+          <tbody>
+          {% for t in tokens %}
+            <tr class="{{ 'reg-quiet' if t.revoked_at }}"><td class="mono">{{ t.prefix }}…</td><td class="fig">{{ t.created_at|dt }}</td><td class="fig">{{ t.last_used_at|dt }}</td>
+              <td class="reg-act">{% if t.revoked_at %}<span class="st st-cancelled">revoked</span>{% else %}<form method="post" action="{{ url_for('security_settings.revoke_scim', org_slug=g.org.slug, token_id=t.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="act act-danger" data-confirm="Revoke this SCIM token? Provisioning stops until a new one is configured." data-confirm-ok="Revoke">Revoke</button></form>{% endif %}</td></tr>
+          {% else %}<tr><td colspan="4" class="empty">No SCIM tokens.</td></tr>{% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock %}

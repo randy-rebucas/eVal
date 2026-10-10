@@ -123,6 +123,7 @@ def persist_result(audit: Audit, result: AuditResult) -> None:
             references=f.references[:10],
             lifecycle=f.lifecycle,
             ai_explanation=f.ai_explanation or {},
+            reachability=f.reachability,
             **carried.get(f.fingerprint, {"triage_status": "open"}),
         )
         for f in result.findings

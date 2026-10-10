@@ -216,3 +216,26 @@ def test_ci_script_end_to_end_against_api(gh_repo, db, monkeypatch, tmp_path, ca
     code = eval_ci.main(["--url", "https://eval.test", "--repository", str(repo.id), "--pr", "5",
                          "--fail-on", "critical"])
     assert code == 0  # nothing critical introduced by the PR (its tree equals main here)
+
+
+def test_pr_audit_assesses_change_risk(gh_repo, db, app):
+    c, org, repo = gh_repo["client"], gh_repo["org"], gh_repo["repo"]
+    c.post(f"/o/{org}/repos/{repo.id}/audits", data={"ref": "main"})
+    pr_tree = Path(app.config["DATA_DIR"]) / "pr-risk"
+    shutil.copytree(FIXTURES / "vulnapp", pr_tree)
+    (pr_tree / "export.py").write_text(
+        "def export(db, name):\n    return db.execute(f\"SELECT * FROM orders WHERE name = '{name}'\")\n")
+    gh_repo["trees"]["d" * 40] = pr_tree
+    c.post(f"/o/{org}/repos/{repo.id}/pulls", data={"number": "5"})
+    audit = db.session.execute(db.select(Audit).where(Audit.pr_number == 5)).scalar_one()
+    risk = audit.stats["change_risk"]
+    assert audit.stats["pr_files"] == [["export.py", 0, 0], ["gone.py", 0, 0]]
+    assert {f["factor"] for f in risk["factors"]} == {"tests", "introduced findings"}
+    assert risk["score"] == 25 and risk["level"] == "low"
+    page = c.get(f"/o/{org}/audits/{audit.id}").data.decode()
+    assert re.search(r"Change risk: <span[^>]*>low</span>", page) and "+15</span> tests" in page
+    raw = new_token(c, org)
+    detail = c.get(f"/api/v1/audits/{audit.id}", headers=auth(raw)).get_json()["audit"]
+    assert detail["pull_request"]["change_risk"]["score"] == 25
+    c.post(f"/o/{org}/audits/{audit.id}/pr-comment")
+    assert "**Change risk: low** (25/100)" in gh_repo["gh"]["comments"][-1]

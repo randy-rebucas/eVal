@@ -10,6 +10,8 @@ from ..security import events
 
 ACTIVE_STATUSES = ("queued", "running")
 MAX_ACTIVE_AUDITS_PER_ORG = 5
+# ui/api: requested by a person or token; pull_request/push: GitHub App webhooks; schedule: periodic re-audit.
+TRIGGERS = ("ui", "api", "pull_request", "push", "schedule")
 
 
 class AuditError(Exception):
@@ -64,26 +66,27 @@ def previous_successful(repo: Repository, before: Audit | None = None, branch: s
 def create_pr_audit(org: Organization, repo: Repository, user_id, number: int, *, trigger: str = "api") -> Audit:
     """Audit a pull request's head commit; findings are compared with the base branch's latest audit."""
     from ..integrations.github import GitHubError
-    from ..integrations.services import github_client
+    from ..integrations.services import CredentialError, repo_client
 
     if repo.source != "github":
         raise AuditError("Pull request audits require a GitHub repository.")
     try:
-        client = github_client(repo.credential)
+        client = repo_client(repo)
         pull = client.get_pull(repo.full_name, number)
-        changed = client.list_pull_files(repo.full_name, number)
-    except GitHubError as exc:
+        stats = client.list_pull_file_stats(repo.full_name, number)
+    except (GitHubError, CredentialError) as exc:
         raise AuditError(str(exc)) from exc
     if pull["state"] != "open":
         raise AuditError(f"Pull request #{number} is {pull['state']}.")
     return create_audit(org, repo, user_id, ref=pull["head_sha"], trigger=trigger,
                         pr={"number": pull["number"], "base_ref": pull["base_ref"], "head_ref": pull["head_ref"],
-                            "changed_files": changed})
+                            "changed_files": [f["path"] for f in stats if f["status"] != "removed"],
+                            "file_stats": stats})
 
 
 def create_audit(
     org: Organization, repo: Repository, user_id, *, ref: str = "", upload: Upload | None = None,
-    trigger: str = "ui", pr: dict | None = None,
+    trigger: str = "ui", pr: dict | None = None, branch: str = "",
 ) -> Audit:
     from eval_engine.workspace import WorkspaceError, validate_ref
 
@@ -109,7 +112,8 @@ def create_audit(
             raise AuditError("Upload does not belong to this repository.")
         ref = ""
 
-    branch = ref if repo.source == "github" else ""
+    # ``branch`` names the branch when ``ref`` is a commit on it (webhook pushes, scheduled audits).
+    branch = (branch or ref) if repo.source == "github" else ""
     baseline_branch = branch
     if pr:
         branch = pr.get("head_ref") or ref
@@ -122,13 +126,16 @@ def create_audit(
         requested_by_id=user_id,
         requested_ref=ref,
         branch=branch[:255],
-        trigger=trigger if trigger in ("ui", "api", "pull_request") else "ui",
+        trigger=trigger if trigger in TRIGGERS else "ui",
         pr_number=pr["number"] if pr else None,
         pr_base_ref=(pr["base_ref"] if pr else "")[:255],
         changed_files=list(pr["changed_files"])[:3000] if pr else [],
         previous_audit_id=prev.id if prev else None,
         status="queued",
         stage="queued",
+        # Per-file line counts of the pull request, for the change-risk assessment (eval_engine.change_risk).
+        stats={"pr_files": [[f["path"], f["additions"], f["deletions"]] for f in pr.get("file_stats", [])][:3000]}
+        if pr else {},
     )
     db.session.add(audit)
     db.session.flush()
@@ -169,3 +176,6 @@ def cancel_audit(org: Organization, audit: Audit) -> None:
     audit.finished_at = utcnow()
     events.record("audit.cancelled", organization_id=org.id, target=audit)
     db.session.commit()
+    from ..integrations import checks
+
+    checks.complete(audit)

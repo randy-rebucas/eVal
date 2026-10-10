@@ -83,6 +83,7 @@ class Finding:
     fingerprint: str = ""
     lifecycle: str = "new"
     ai_explanation: dict = field(default_factory=dict)
+    reachability: str = ""  # vulnerable dependencies: imported | not-imported | transitive (see reachability.py)
 
     @property
     def scored(self) -> bool:
@@ -114,4 +115,5 @@ class Finding:
             fingerprint=data.get("fingerprint", ""),
             lifecycle=data.get("lifecycle", "new"),
             ai_explanation=dict(data.get("ai_explanation", {})),
+            reachability=data.get("reachability", ""),
         )

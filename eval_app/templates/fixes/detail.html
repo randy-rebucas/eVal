@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% from "_macros.html" import severity_badge %}
+{% block title %}Fix · {{ audit.repository.name }}{% endblock %}
+{% block content %}
+{% set repo = audit.repository %}
+{% set can_write = g.membership.role != 'viewer' %}
+<div class="page">
+  <header class="page-head">
+    <div>
+      <p class="trail"><a href="{{ url_for('repos.detail', org_slug=g.org.slug, repo_id=repo.id) }}">{{ repo.name }}</a><span class="sep">/</span><a href="{{ url_for('audits.detail', org_slug=g.org.slug, audit_id=audit.id) }}#findings">audit {{ audit.created_at|dt }}</a><span class="sep">/</span>fix</p>
+      <h1 class="page-title"><i class="bi bi-magic" aria-hidden="true"></i> AI fix · {{ repo.name }} <span class="st st-{{ 'succeeded' if fix.status in ['ready', 'pr_opened'] else fix.status }}">{{ fix.status.replace('_', ' ') }}</span></h1>
+      <p class="page-meta">
+        <span>from commit <span class="mono">{{ audit.commit_sha[:12] or '—' }}</span></span>
+        <span>requested {{ fix.created_at|dt }}{% if fix.created_by %} by {{ fix.created_by.email }}{% endif %}</span>
+        {% if fix.ai_model %}<span>{{ fix.ai_model }}</span>{% endif %}
+      </p>
+    </div>
+    <div class="page-acts">
+      {% if fix.diff %}<a class="act" href="{{ url_for('fixes.patch', org_slug=g.org.slug, fix_id=fix.id) }}"><i class="bi bi-download" aria-hidden="true"></i> Download .patch</a>{% endif %}
+      {% if fix.pr_url %}
+        <a class="btn-ink" href="{{ fix.pr_url }}" rel="noopener noreferrer" target="_blank"><i class="bi bi-github" aria-hidden="true"></i> View PR #{{ fix.pr_number }}</a>
+      {% elif fix.status == 'ready' and can_write and repo.source == 'github' %}
+        {% if repo.credential or (repo.installation and not repo.installation.suspended) %}
+        <form method="post" action="{{ url_for('fixes.pull_request', org_slug=g.org.slug, fix_id=fix.id) }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          {% if verification.get('verdict') == 'regressed' %}
+          <div class="form-check mb-1"><input class="form-check-input" type="checkbox" name="accept_regression" id="accept-regression" required><label class="form-check-label" for="accept-regression">I reviewed the new findings</label></div>
+          {% endif %}
+          <button class="btn-ink" data-confirm="Push branch eval/fix-{{ fix.id.hex[:10] }} to {{ repo.full_name }} and open a pull request with these changes?" data-confirm-ok="Open pull request"><i class="bi bi-git" aria-hidden="true"></i> Open pull request</button>
+        </form>
+        {% else %}<span class="pane-note mt-0">Attach a GitHub credential to this repository to open a pull request.</span>{% endif %}
+      {% endif %}
+    </div>
+  </header>
+
+  {% if not fix.is_finished %}
+  <section class="term" data-progress-url="{{ url_for('fixes.status', org_slug=g.org.slug, fix_id=fix.id) }}" aria-label="Fix progress">
+    <div class="term-bar"><span class="term-dots" aria-hidden="true"><i></i><i></i><i></i></span><p class="term-title">eval-fix — <b>{{ repo.name }}</b></p></div>
+    <div class="term-body">
+      <p class="term-line"><span class="term-prompt">$</span> stage: <strong data-stage>{{ 'generating fix' if fix.status == 'running' else 'queued' }}</strong></p>
+      <div class="progress my-2" role="progressbar" aria-label="Fix progress"><div class="progress-bar progress-bar-striped progress-bar-animated" data-width="{{ 50 if fix.status == 'running' else 10 }}"></div></div>
+      <p class="term-line term-cmt mt-2"># The AI sees only the affected files (secrets masked). Nothing is pushed until you open a pull request.</p>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if fix.error %}<div class="alert alert-danger" role="alert">{{ fix.error }}</div>{% endif %}
+
+  {% if fix.is_finished %}
+  <section class="pane" aria-labelledby="res-h">
+    <div class="pane-bar"><h2 id="res-h">Findings</h2><span class="pane-aside">{{ fix.results.get('fixed', [])|length }} fixed · {{ fix.results.get('failed', [])|length }} not changed</span></div>
+    <div class="register-wrap">
+    <table class="register">
+      <thead><tr><th class="w-fit">Severity</th><th>Finding</th><th>Result</th></tr></thead>
+      <tbody>
+      {% for item in fix.results.get('fixed', []) + fix.results.get('failed', []) %}
+        {% set f = findings.get(item.id) %}
+        <tr>
+          <td>{{ severity_badge(f.severity) if f else '' }}</td>
+          <td class="reg-repo">{% if f %}<a href="{{ url_for('findings.detail', org_slug=g.org.slug, finding_id=f.id) }}">{{ f.title }}</a><span class="reg-sub d-block mono">{{ f.location }}</span>{% else %}<span class="reg-quiet">deleted finding</span>{% endif %}</td>
+          <td>{% if item.files is defined %}<span class="lc-resolved"><i class="bi bi-check2" aria-hidden="true"></i> fixed</span> <span class="reg-sub d-block">{{ item.summary }}</span>{% else %}<span class="reg-quiet">not changed</span> <span class="reg-sub d-block">{{ item.reason }}</span>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if fix.is_finished and fix.diff %}
+  {% set v = verification %}
+  {% set verdicts = {
+    'passed': ('lc-resolved', 'bi-patch-check', 'Verified: every fixed finding is gone and nothing new was introduced.'),
+    'partial': ('', 'bi-patch-question', 'Partially verified: nothing new was introduced, but some targeted findings are still reported.'),
+    'regressed': ('lc-new', 'bi-patch-exclamation', 'The re-audit found new problems introduced by this change.'),
+    'incomplete': ('', 'bi-patch-question', 'Verification incomplete: some analyzers could not re-run.'),
+    'error': ('', 'bi-question-circle', 'Not verified: the re-audit could not run.'),
+  } %}
+  {% set cls, icon, text = verdicts.get(v.get('verdict') or 'error', verdicts['error']) %}
+  <section class="pane" aria-labelledby="ver-h">
+    <div class="pane-bar"><h2 id="ver-h"><span><i class="bi {{ icon }}" aria-hidden="true"></i> Re-audit of the patched code</span></h2>{% if v.get('analyzers') %}<span class="pane-aside">{{ v.analyzers|length }} analyzers · {{ v.get('duration_seconds', 0) }}s</span>{% endif %}</div>
+    <div class="px-3 pb-3">
+      <p class="{{ cls }} mb-2"><strong>{{ text if v else 'Not verified: this fix was not re-audited.' }}</strong></p>
+      {% if v.get('error') %}<p class="pane-note mt-0">{{ v.error }}</p>{% endif %}
+      {% if v.get('introduced') %}
+      <p class="mb-1">New findings in the changed files:</p>
+      <ul class="flist">{% for item in v.introduced %}<li>{{ severity_badge(item.severity) }} <span class="lc-new">{{ item.title }}</span> <span class="loc mono">{{ item.file_path }}{% if item.line_start %}:{{ item.line_start }}{% endif %}</span></li>{% endfor %}</ul>
+      {% endif %}
+      {% if v.get('still_present') %}
+      <p class="mb-1">Still reported after the change:</p>
+      <ul class="flist">{% for fid in v.still_present %}{% set f = findings.get(fid) %}{% if f %}<li>{{ severity_badge(f.severity) }} {{ f.title }} <span class="loc mono">{{ f.location }}</span></li>{% endif %}{% endfor %}</ul>
+      {% endif %}
+      {% if v.get('incomplete') %}<p class="pane-note mt-0">Not re-run: {% for i in v.incomplete %}{{ i.name }} ({{ i.reason }}){{ ', ' if not loop.last }}{% endfor %}</p>{% endif %}
+      <p class="pane-note mt-0">eVal applied the patch to the audited commit and ran the same static analyzers again. Findings are compared only in the changed files; your tests were not run.</p>
+    </div>
+  </section>
+  {% endif %}
+
+  {% if fix.diff %}
+  <section class="pane" aria-labelledby="diff-h">
+    <div class="pane-bar"><h2 id="diff-h"><span><i class="bi bi-file-diff" aria-hidden="true"></i> Proposed changes</span></h2><span class="badge kind kind-ai_observation">AI-generated · review before merging</span></div>
+    <pre class="diff" tabindex="0">{% for line in diff_lines %}<span class="{{ 'd-file' if line.startswith(('diff --git', '--- ', '+++ ')) else 'd-hunk' if line.startswith('@@') else 'd-add' if line.startswith('+') else 'd-del' if line.startswith('-') else 'd-ctx' }}">{{ line }}</span>{% endfor %}</pre>
+    <p class="pane-note px-3 pb-3">Apply locally with <code>git apply eval-fix-….patch</code>, or open a pull request{% if repo.source != 'github' %} (GitHub repositories only){% endif %}. Run your tests before merging: eVal does not build or execute your code.</p>
+  </section>
+  {% endif %}
+</div>
+{% endblock %}

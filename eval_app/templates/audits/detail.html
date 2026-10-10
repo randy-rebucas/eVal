@@ -25,6 +25,7 @@
             {% for fmt, label in [('html','HTML report'),('md','Markdown'),('json','JSON'),('sarif','SARIF (code scanning)')] %}
             <li><a class="dropdown-item" href="{{ url_for('audits.report', org_slug=g.org.slug, audit_id=audit.id, fmt=fmt) }}">{{ label }}</a></li>
             {% endfor %}
+            <li><a class="dropdown-item" href="{{ url_for('audits.evidence', org_slug=g.org.slug, audit_id=audit.id) }}">Evidence pack (ZIP, compliance)</a></li>
           </ul>
         </div>
       {% elif not audit.is_finished and can_write %}
@@ -68,6 +69,8 @@
         <div class="score-line"><span class="score-big">{{ audit.overall_score|score }}</span><span class="score-of">/ 100</span></div>
         <div class="mt-2">{{ score_bar(audit.overall_score) }}</div>
         <div class="mt-3 d-flex align-items-center gap-2">{{ risk_badge(audit.risk_level) }} <span class="small text-muted">risk</span></div>
+        {% if gate %}<p class="mt-2 mb-0 small" title="{{ gate.reasons|join('; ') or 'No finding at or above the gate threshold' }}">{% if gate.passed %}<span class="lc-resolved"><i class="bi bi-check2-circle" aria-hidden="true"></i> gate passed</span>{% else %}<span class="lc-new"><i class="bi bi-x-circle" aria-hidden="true"></i> gate failed</span> · {{ gate.reasons|join('; ') }}{% endif %} <a class="reg-sub" href="{{ url_for('integrations.policy', org_slug=g.org.slug, repo=audit.repository_id) }}">policy</a></p>{% endif %}
+        {% for note in audit.stats.get('policy_notes', []) %}<p class="pane-note mt-1 mb-0">{{ note }}</p>{% endfor %}
         <div class="mt-3">{{ sparkline(history) }}</div>
       </div>
     </section>
@@ -118,6 +121,12 @@
         {% else %}No baseline audit of {{ pr.base_ref }} exists, so every finding in changed files counts as introduced — audit {{ pr.base_ref }} first for a precise diff.{% endif %}</p>
       <p class="mb-0"><strong>{{ introduced_total }}</strong> finding(s) introduced in changed files
         {% for s in severity_order %}{% if pr.introduced_counts[s] %} · {{ severity_badge(s) }} {{ pr.introduced_counts[s] }}{% endif %}{% endfor %}</p>
+      {% if pr.change_risk %}{% set cr = pr.change_risk %}
+      <div class="mt-3">
+        <p class="mb-1"><strong>Change risk: <span class="{{ 'lc-new' if cr.level == 'high' else '' }}">{{ cr.level }}</span></strong> <span class="reg-sub">({{ cr.score }}/100 — how much review this change deserves; does not affect the audit score)</span></p>
+        {% if cr.factors %}<ul class="flist mb-0">{% for fct in cr.factors %}<li><span class="mono">+{{ fct.points }}</span> {{ fct.factor }} <span class="reg-sub">{{ fct.detail }}</span></li>{% endfor %}</ul>{% endif %}
+      </div>
+      {% endif %}
     </div>
     {% if pr.introduced %}
     <ul class="flist is-ruled">
@@ -159,6 +168,25 @@
   <div class="alert alert-warning mb-0"><i class="bi bi-stars" aria-hidden="true"></i> AI analysis was enabled but did not complete: {{ audit.ai_summary.error }}</div>
   {% endif %}
 
+  {% if fixes %}
+  <section class="pane" aria-labelledby="fixes-h">
+    <div class="pane-bar"><h2 id="fixes-h"><span><i class="bi bi-magic" aria-hidden="true"></i> AI fixes</span></h2><span class="pane-aside">{{ fixes|length }}</span></div>
+    <div class="register-wrap">
+    <table class="register">
+      <thead><tr><th>Requested</th><th>Findings</th><th>Status</th><th>Pull request</th></tr></thead>
+      <tbody>{% for x in fixes %}
+        <tr>
+          <td class="reg-repo"><a href="{{ url_for('fixes.detail', org_slug=g.org.slug, fix_id=x.id) }}">{{ x.created_at|dt }}</a></td>
+          <td class="fig">{{ x.results.get('fixed', [])|length }} / {{ x.finding_ids|length }} fixed</td>
+          <td><span class="st st-{{ 'succeeded' if x.status in ['ready', 'pr_opened'] else x.status }}">{{ x.status.replace('_', ' ') }}</span></td>
+          <td>{% if x.pr_url %}<a href="{{ x.pr_url }}" rel="noopener noreferrer" target="_blank">#{{ x.pr_number }}</a>{% else %}<span class="reg-quiet">—</span>{% endif %}</td>
+        </tr>{% endfor %}
+      </tbody>
+    </table>
+    </div>
+  </section>
+  {% endif %}
+
   <section class="pane" aria-labelledby="findings">
     <div class="pane-bar"><h2 id="findings" tabindex="-1">Findings</h2><span class="pane-aside">{{ page.total }} match{{ '' if page.total == 1 else 'es' }}</span></div>
     <form class="filter-bar" method="get" action="#findings">
@@ -178,18 +206,20 @@
     </form>
 
     {% set issue_capable = repo.source == 'github' and can_write %}
+    {% set fix_capable = can_write and ai_fix %}
+    {% set selectable = issue_capable or fix_capable %}
     <form method="post" action="{{ url_for('findings.create_issues', org_slug=g.org.slug, audit_id=audit.id) }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <div class="register-wrap">
       <table class="register">
         <thead><tr>
-          {% if issue_capable %}<th class="w-fit"><input type="checkbox" class="form-check-input" data-select-all=".finding-check" aria-label="Select all"></th>{% endif %}
+          {% if selectable %}<th class="w-fit"><input type="checkbox" class="form-check-input" data-select-all=".finding-check" aria-label="Select all"></th>{% endif %}
           <th class="w-fit">Severity</th><th>Finding</th><th>Location</th><th class="w-fit">Type</th><th class="w-fit">Status</th>{% if repo.source == 'github' %}<th class="w-fit">Issue</th>{% endif %}
         </tr></thead>
         <tbody>
         {% for f in page.items %}
           <tr class="finding-row">
-            {% if issue_capable %}<td><input type="checkbox" class="form-check-input finding-check" name="finding_ids" value="{{ f.id }}" {% if f.fingerprint in issue_links %}disabled{% endif %} aria-label="Select finding"></td>{% endif %}
+            {% if selectable %}<td><input type="checkbox" class="form-check-input finding-check" name="finding_ids" value="{{ f.id }}" aria-label="Select finding"></td>{% endif %}
             <td>{{ severity_badge(f.severity) }}</td>
             <td><a class="f-title" href="{{ url_for('findings.detail', org_slug=g.org.slug, finding_id=f.id) }}">{{ f.title }}</a>
               <div class="reg-sub">{{ category_labels.get(f.category, f.category) }} · {{ f.rule_id }}{% if f.sources|length > 1 %} · confirmed by {{ f.sources|length }} analyzers{% endif %}</div></td>
@@ -204,11 +234,14 @@
         </tbody>
       </table>
       </div>
-      {% if issue_capable or page.pages > 1 %}
+      {% if selectable or page.pages > 1 %}
       <div class="table-foot">
         <div>
+          {% if fix_capable %}
+            <button class="act act-primary" formaction="{{ url_for('fixes.create', org_slug=g.org.slug, audit_id=audit.id) }}"><i class="bi bi-magic" aria-hidden="true"></i> Fix selected with AI</button>
+          {% endif %}
           {% if issue_capable %}
-            {% if repo.credential %}<button class="act"><i class="bi bi-github" aria-hidden="true"></i> Create GitHub issues for selected</button>
+            {% if repo.credential or (repo.installation and not repo.installation.suspended) %}<button class="act"><i class="bi bi-github" aria-hidden="true"></i> Create GitHub issues for selected</button>
             {% else %}<span>Attach a GitHub credential to this repository to create issues.</span>{% endif %}
           {% endif %}
         </div>

@@ -83,6 +83,36 @@ def _offline_text(model: dict) -> str:
 _FP_ORDER = {"low": 0, "medium": 1, "high": 2}
 
 
+def _compliance(f: dict) -> dict:
+    """The finding's framework mapping (computed when the model does not carry one)."""
+    from .compliance import map_finding
+
+    if not f.get("compliance"):
+        f["compliance"] = map_finding(f["rule_id"], f.get("category", ""), f.get("description", ""),
+                                      f.get("references"))
+    return f["compliance"]
+
+
+def _compliance_line(f: dict) -> str:
+    c = _compliance(f)
+    parts = [*c["cwe"], *c["owasp"], *(f"ASVS {x}" for x in c["asvs"]), *(f"SOC 2 {x}" for x in c["soc2"]),
+             *(f"ISO 27001 {x}" for x in c["iso27001"])]
+    return " · ".join(parts)
+
+
+def _compliance_summary(model: dict) -> dict:
+    from .compliance import summarize
+
+    findings = [f for f in model.get("findings", []) if f.get("kind") != "ai_observation"]
+    for f in findings:
+        _compliance(f)
+    return summarize(findings)
+
+
+COMPLIANCE_NOTE = ("Mappings are indicative: a finding is evidence relevant to a control, not a determination that "
+                   "the control is or is not met.")
+
+
 def _sorted_findings(model: dict) -> list[dict]:
     rank = {s: i for i, s in enumerate(SEVERITY_ORDER)}
 
@@ -99,6 +129,7 @@ def render_json(model: dict) -> str:
     out = dict(model)
     out["meta"] = _meta(model)
     out["disclaimer"] = DISCLAIMER
+    out["compliance"] = {"note": COMPLIANCE_NOTE, "controls": _compliance_summary(model)}
     return json.dumps(out, indent=2, sort_keys=False, default=str)
 
 
@@ -141,6 +172,16 @@ def render_markdown(model: dict) -> str:
                   "scores._"]
         if model["ai_summary"].get("summary"):
             lines += ["", _md(model["ai_summary"]["summary"])]
+    from .compliance import FRAMEWORK_TITLES
+
+    summary = _compliance_summary(model)
+    if any(summary.values()):
+        lines += ["", "## Compliance mapping", "", f"_{COMPLIANCE_NOTE}_", ""]
+        for fw, controls in summary.items():
+            if controls:
+                top = ", ".join(f"{c['control']}{' ' + c['title'] if c['title'] else ''} ({c['findings']})"
+                                for c in controls[:8])
+                lines.append(f"- **{FRAMEWORK_TITLES[fw]}:** {_md(top)}")
     lines += ["", "## Findings", ""]
     findings = _sorted_findings(model)
     if not findings:
@@ -152,6 +193,8 @@ def render_markdown(model: dict) -> str:
                   f"- **Rule:** `{f['rule_id']}` · **Sources:** {', '.join(f.get('sources', []))}"]
         if f.get("lifecycle"):
             lines.append(f"- **Status vs. previous audit:** {f['lifecycle']}")
+        if _compliance_line(f):
+            lines.append(f"- **Maps to:** {_md(_compliance_line(f))}")
         if _triage_text(f):
             lines.append(f"- **Triage:** {_md(_triage_text(f))}")
         lines += ["", _md(f.get("description", "")), ""]
@@ -217,6 +260,17 @@ def render_html(model: dict) -> str:
                      "model; verify before acting. AI never changes scores.</p>")
         if model["ai_summary"].get("summary"):
             parts.append(f"<p>{e(model['ai_summary']['summary'])}</p>")
+    from .compliance import FRAMEWORK_TITLES
+
+    summary = _compliance_summary(model)
+    if any(summary.values()):
+        parts.append(f"<h2>Compliance mapping</h2><p class='muted'>{e(COMPLIANCE_NOTE)}</p><table><tr>"
+                     "<th>Framework</th><th>Control</th><th>Findings</th></tr>")
+        for fw, controls in summary.items():
+            for c in controls[:10]:
+                parts.append(f"<tr><td>{e(FRAMEWORK_TITLES[fw])}</td><td>{e(c['control'])} {e(c['title'])}</td>"
+                             f"<td>{c['findings']}</td></tr>")
+        parts.append("</table>")
     findings = _sorted_findings(model)
     parts.append(f"<h2>Findings ({len(findings)})</h2>")
     for f in findings:
@@ -227,6 +281,8 @@ def render_html(model: dict) -> str:
             f"{e(KIND_LABELS.get(f['kind'], f['kind']))} · confidence {e(f['confidence'])} · "
             f"<code>{e(f['rule_id'])}</code></div><p>{e(f.get('description', ''))}</p>"
         )
+        if _compliance_line(f):
+            parts.append(f"<p class='muted'>Maps to: {e(_compliance_line(f))}</p>")
         if _triage_text(f):
             parts.append(f"<p class='note'><strong>Triage:</strong> {e(_triage_text(f))}</p>")
         if f.get("evidence"):
@@ -261,11 +317,15 @@ def render_sarif(model: dict) -> str:
     for f in _sorted_findings(model):
         if f["kind"] == "ai_observation":
             continue
+        c = _compliance(f)
+        tags = [f["category"], "eval"] + (["security"] if f["category"] in ("security", "api") or c["cwe"] else [])
+        tags += [f"external/cwe/{x.lower()}" for x in c["cwe"]]
+        tags += [f"owasp-top10-2021/{x.split(':')[0].lower()}" for x in c["owasp"]]
         rules.setdefault(f["rule_id"], {
             "id": f["rule_id"],
             "shortDescription": {"text": f["title"][:200]},
             "helpUri": (f.get("references") or [None])[0],
-            "properties": {"category": f["category"], "tags": [f["category"], "eval"],
+            "properties": {"category": f["category"], "tags": tags,
                            "security-severity": _SECURITY_SEVERITY[f["severity"]]},
         })
         result = {

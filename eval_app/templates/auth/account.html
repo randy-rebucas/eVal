@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Account{% endblock %}
+{% block content %}
+<div class="page">
+  <header class="page-head">
+    <div>
+      <p class="trail">account</p>
+      <h1 class="page-title"><i class="bi bi-person" aria-hidden="true"></i> {{ current_user.name or current_user.email }}</h1>
+      <p class="page-lede">{{ current_user.email }} · {{ 'password and connected accounts' if current_user.has_password else 'signs in with connected accounts only' }}</p>
+    </div>
+  </header>
+
+  <section class="pane" aria-labelledby="mfa-h">
+    <div class="pane-bar"><h2 id="mfa-h"><span><i class="bi bi-shield-lock" aria-hidden="true"></i> Two-factor authentication</span></h2><span class="pane-aside">{{ 'on' if current_user.mfa_enabled else 'off' }}</span></div>
+    <div class="pane-body"><a class="act" href="{{ url_for('mfa.settings') }}">{{ 'Manage' if current_user.mfa_enabled else 'Set up' }} two-factor authentication</a></div>
+  </section>
+
+  <section class="pane" aria-labelledby="signin-h">
+    <div class="pane-bar"><h2 id="signin-h"><span><i class="bi bi-box-arrow-in-right" aria-hidden="true"></i> Sign-in methods</span></h2><span class="pane-aside">{{ linked|length }} connected</span></div>
+    <div class="register-wrap">
+    <table class="register">
+      <thead><tr><th>Provider</th><th>Account</th><th>Last used</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
+      <tbody>
+      {% for p in providers %}
+        {% set i = linked.get(p.key) %}
+        {% if i or p.key in enabled %}
+        <tr>
+          <td class="reg-repo" data-label="Provider"><i class="bi {{ p.icon }}" aria-hidden="true"></i> <b>{{ p.label }}</b></td>
+          <td data-label="Account">{% if i %}{{ i.email or 'connected' }}{% else %}<span class="reg-quiet">not connected</span>{% endif %}</td>
+          <td class="fig" data-label="Last used">{{ i.last_login_at|dt if i and i.last_login_at else '—' }}</td>
+          <td class="reg-act">
+            {% if i %}
+            <form method="post" action="{{ url_for('auth.social_disconnect', provider=p.key) }}">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="act act-danger" data-confirm="Disconnect {{ p.label }}? You will no longer be able to sign in with it." data-confirm-ok="Disconnect">Disconnect</button>
+            </form>
+            {% else %}
+            <a class="act" href="{{ url_for('auth.social_connect', provider=p.key, csrf=csrf_token()) }}">Connect</a>
+            {% endif %}
+          </td>
+        </tr>
+        {% endif %}
+      {% endfor %}
+      {% if not enabled and not linked %}
+        <tr><td colspan="4" class="empty">No sign-in providers are configured on this server.</td></tr>
+      {% endif %}
+      </tbody>
+    </table>
+    </div>
+  </section>
+</div>
+{% endblock %}

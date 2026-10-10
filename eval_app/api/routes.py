@@ -32,6 +32,9 @@ def _audit_json(a: Audit, detail: bool = False) -> dict:
         data.update(scores=a.scores, lifecycle=(a.stats or {}).get("lifecycle", {}), tools=a.tool_status,
                     languages=a.languages, ai_summary={k: v for k, v in (a.ai_summary or {}).items()
                                                        if k in ("summary", "top_risks", "error", "model")})
+        from .. import policies
+
+        data["gate"] = {**policies.evaluate(a).to_dict(), "policy": a.policy or {}}
         if a.pr_number:
             summary = findings_service.pr_summary(a)
             summary.pop("introduced")

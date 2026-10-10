@@ -8,7 +8,7 @@
 local AI model to explain each problem and suggest a fix.
 
 **About 50 words:** eVal audits a codebase for security, dependency, testing, DevOps and maintainability problems
-using 17 static analyzers, scores the results deterministically, then uses an AI model running on the user's own
+using 20 static analyzers, scores the results deterministically, then uses an AI model running on the user's own
 device to explain each finding and suggest a fix. With `--offline --ai local`, nothing leaves the machine. No
 API key, no account, no cloud.
 
@@ -27,7 +27,7 @@ explanation of what to do about it.
 
 eVal Local runs the entire audit on the developer's computer:
 
-1. **Static analysis:** 17 analyzers (Ruff, Bandit, mypy, ESLint, TypeScript, Semgrep, Trivy, plus built-in
+1. **Static analysis:** 20 analyzers (Ruff, Bandit, mypy, ESLint, TypeScript, Semgrep, Trivy, plus built-in
    checks for secrets, API security, database access, DevOps/CI, tests, dependencies, architecture and
    performance) produce findings with file, line, evidence and severity. The code is never executed.
 2. **Deterministic scoring:** documented, reproducible scores per category and overall. Categories that

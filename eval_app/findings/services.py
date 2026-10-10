@@ -9,12 +9,13 @@ from flask import current_app, url_for
 from sqlalchemy import and_
 from sqlalchemy import update as sa_update
 
+from eval_engine.compliance import map_finding
 from eval_engine.findings import SEVERITY_ORDER
 from eval_engine.redaction import redact
 
 from ..extensions import db
 from ..integrations.github import GitHubError
-from ..integrations.services import CredentialError, github_client
+from ..integrations.services import CredentialError, has_write_access, repo_client
 from ..models import (
     TRIAGE_DISMISSED,
     TRIAGE_STATUSES,
@@ -185,6 +186,8 @@ def finding_to_dict(f: Finding) -> dict:
         "references": f.references, "lifecycle": f.lifecycle, "triage_status": f.triage_status,
         "triage": triage_to_dict(f),
         "ai_explanation": f.ai_explanation or {},
+        "compliance": map_finding(f.rule_id, f.category, f.description, f.references),
+        "reachability": f.reachability or None,
     }
 
 
@@ -248,7 +251,8 @@ def pr_summary(audit: Audit) -> dict:
         counts[f.severity] += 1
     return {"pr_number": audit.pr_number, "base_ref": audit.pr_base_ref, "changed_files": len(audit.changed_files),
             "baseline_audit_id": str(audit.previous_audit_id) if audit.previous_audit_id else None,
-            "introduced_counts": counts, "introduced": [finding_to_dict(f) for f in introduced[:200]]}
+            "introduced_counts": counts, "introduced": [finding_to_dict(f) for f in introduced[:200]],
+            "change_risk": (audit.stats or {}).get("change_risk")}
 
 
 def pr_comment_body(audit: Audit, link: str) -> str:
@@ -269,6 +273,11 @@ def pr_comment_body(audit: Audit, link: str) -> str:
         lines.append(f"**{total} finding(s) introduced in changed files:** {breakdown}")
     else:
         lines.append("**No new findings in changed files.**")
+    risk = s.get("change_risk")
+    if risk:
+        top = sorted(risk["factors"], key=lambda f: -f["points"])[:3]
+        why = "; ".join(f"{f['factor']}: {f['detail']}" for f in top)
+        lines.append(f"**Change risk: {risk['level']}** ({risk['score']}/100){' — ' + why if why else ''}")
     lines.append("")
     for f in pr_introduced(audit)[:15]:
         lines.append(f"- **{f.severity.upper()}** {f.title} — `{f.location}`")
@@ -278,10 +287,10 @@ def pr_comment_body(audit: Audit, link: str) -> str:
 
 def post_pr_comment(org: Organization, audit: Audit, link: str) -> str:
     repo = audit.repository
-    if not audit.pr_number or repo.source != "github" or repo.credential is None:
+    if not audit.pr_number or not has_write_access(repo):
         raise FindingError("PR comments need a GitHub pull request audit and a repository credential.")
     try:
-        result = github_client(repo.credential).create_issue_comment(repo.full_name, audit.pr_number,
+        result = repo_client(repo).create_issue_comment(repo.full_name, audit.pr_number,
                                                                      pr_comment_body(audit, link))
     except (GitHubError, CredentialError) as exc:
         raise FindingError(str(exc)) from exc
@@ -316,7 +325,7 @@ def create_github_issues(org: Organization, audit: Audit, finding_ids: list, use
     repo = audit.repository
     if repo.source != "github":
         raise FindingError("GitHub issues can only be created for GitHub repositories.")
-    if repo.credential is None:
+    if not has_write_access(repo):
         raise FindingError("Attach a GitHub credential with Issues: write to this repository first.")
     findings = db.session.execute(
         db.select(Finding).where(Finding.id.in_(finding_ids), Finding.audit_id == audit.id,
@@ -327,7 +336,7 @@ def create_github_issues(org: Organization, audit: Audit, finding_ids: list, use
     if len(findings) > 25:
         raise FindingError("Create at most 25 issues at a time.")
     try:
-        client = github_client(repo.credential)
+        client = repo_client(repo)
     except CredentialError as exc:
         raise FindingError(str(exc)) from exc
     created, skipped, errors = [], [], []

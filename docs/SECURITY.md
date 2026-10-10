@@ -75,21 +75,65 @@ without secrets.
 ## 5. AI-specific controls
 
 * Disabled by default, per organization, admin-only to enable.
-* Only selected findings with **redacted, length-capped** evidence are sent — never whole files.
+* During audits, only selected findings with **redacted, length-capped** evidence are sent — never whole files.
+  **Auto-fix** (an explicit member action on chosen findings) is the exception: it sends the affected files
+  (at most 5; files over 400 lines as ±40-line windows around the findings), with secrets swapped for numbered
+  placeholders that are restored only where the model copies them back verbatim. `eval_engine/ai/fix.py`.
 * Repository-derived text is wrapped in `<untrusted_repository_content>` delimiters; closing/opening tags inside
   the data are neutralised; the system prompt forbids following embedded instructions.
 * Output must be JSON matching a schema; unknown IDs, keys and categories are dropped; strings are capped and
   redacted again; invalid output is discarded entirely.
 * AI receives *copies* of findings and can only contribute `ai_explanation` and unscored `ai_observation`
   findings — it cannot change severities, evidence, or scores (test `test_ai_enricher_cannot_change_scores`).
-* AI content is labelled as AI-generated and escaped in the UI; suggested patches are **never applied**.
+* AI content is labelled as AI-generated and escaped in the UI. Explanation patches are illustrative only.
+  Auto-fix edits are exact find/replace pairs: each must match the file exactly once and may only touch files
+  that were sent, or the finding's fix is rejected whole. The result is a diff a person reviews; nothing is
+  pushed until they open a pull request.
 * OpenAI-compatible base URLs must be on the operator allow-list (`EVAL_AI_ALLOWED_BASE_URLS`), preventing
   tenants from using the worker for SSRF.
 
 ## 6. Outbound actions
 
-eVal never modifies audited code. GitHub issues and PR comments are created only on an explicit user action
-(member role), deduplicated per fingerprint, with redacted bodies.
+eVal never executes audited code and never writes to a repository on its own. GitHub issues, PR comments and
+auto-fix pull requests are created only on an explicit user action (member role). Issues are deduplicated per
+fingerprint with redacted bodies. An auto-fix pull request is always a new `eval/fix-…` branch cut from the
+audited commit, never a push to an existing branch; each file update carries the blob SHA it replaces, so GitHub
+rejects it if the file changed. Opening one needs a repository credential with Contents and Pull requests write
+access (the OAuth "repo" scope covers it).
+
+Before an auto-fix can become a pull request, the patched tree is **re-audited** with the analyzers that ran in the
+original audit (same policy). If the patch introduced findings, opening the PR requires an explicit
+acknowledgement, which is recorded in the security log.
+
+**GitHub App.** Webhooks are rejected unless `X-Hub-Signature-256` matches `GITHUB_APP_WEBHOOK_SECRET` (constant-time
+HMAC-SHA256 check). An installation is linked to an organization only through the setup flow: the callback state
+is bound to the admin's session and organization, and the GitHub user-authorization code is exchanged to confirm
+that this user can access the installation (`GET /user/installations`), so a forged `installation_id` is refused.
+An installation can belong to one organization only. Installation tokens are minted per use (one hour), cached in
+memory and never stored. Events for unlinked installations are ignored, and webhooks never create repositories.
+
+**Notifications.** Webhook URLs are encrypted at rest; Slack and Teams URLs must be on their documented hosts, and
+generic webhooks must resolve to a public address (checked when saved and again when sending; redirects are not
+followed). Generic webhooks are signed (`X-Eval-Signature: sha256=…`) with a per-channel secret shown once. Messages
+contain finding titles and locations, never evidence.
+
+## 6a. Identity
+
+* **TOTP two-factor authentication** (RFC 6238): secrets are encrypted; a code is accepted once (the last
+  accepted time step is stored); ten one-time recovery codes are stored as SHA-256 hashes. Every password and
+  social sign-in of an account with TOTP passes the challenge. Organizations can require MFA; an admin cannot turn
+  the requirement on without MFA on their own account.
+* **OIDC single sign-on** per organization: authorization code flow with PKCE, `state` and `nonce`; ID-token
+  signatures are verified against the IdP's JWKS (RS256/ES256), and `iss`, `aud`, `exp`, `iat` are checked; email
+  addresses must be in the connection's domains. Because an organization controls its own IdP, **SSO never signs
+  into an account it does not own**: only accounts linked to that IdP, accounts the organization provisioned (SCIM
+  or SSO), or new accounts. Existing users link SSO from a session in which they already signed in. Enforced SSO
+  exempts owners (break-glass), so a broken IdP cannot lock an organization out.
+* **SCIM 2.0** provisioning with per-organization bearer tokens (hash stored). SCIM sees only the organization's
+  members; it deactivates only accounts the organization created and that belong to no other organization, and it
+  never removes owners.
+* The **audit log** (Settings → Audit log, CSV export) shows sign-ins, MFA changes, membership, credentials, policies,
+  triage, exports, SSO and SCIM events. CSV exports neutralize spreadsheet formulas.
 
 ## 7. Known gaps (honest list)
 
@@ -111,5 +155,8 @@ eVal never modifies audited code. GitHub issues and PR comments are created only
 * Git transfer size cannot be capped before download; limits are enforced after checkout plus the GitHub-reported
   repository size check at connection time.
 * The in-memory rate limiter fallback is per-process; configure `REDIS_URL` in production.
-* Email verification, password reset, MFA and SSO are not implemented.
+* Email verification and password reset are not implemented. SAML SSO is not implemented (OIDC is): SAML needs a
+  vetted XML-signature library (e.g. python3-saml/xmlsec) rather than hand-written verification.
+* SSO trusts the configured email domains without DNS verification; that only affects accounts the organization
+  itself creates, by design (see 6a).
 * PostgreSQL RLS policies are designed for but not enabled.

@@ -97,20 +97,35 @@ def save_settings(org: Organization, *, enabled: bool, provider: str, model: str
     return settings
 
 
-def build_enricher(organization_id):
-    """Return an Enricher for the org, None when AI is disabled, or an object reporting a config error."""
+def ai_enabled(organization_id) -> bool:
+    settings = get_settings(organization_id)
+    return bool(settings and settings.enabled)
+
+
+def build_ai_provider(organization_id):
+    """The org's configured AI provider, or None when AI is disabled. Raises AIError when misconfigured."""
     settings = get_settings(organization_id)
     if settings is None or not settings.enabled:
         return None
     try:
         key = crypto.decrypt(settings.credential.encrypted_secret) if settings.credential else ""
-        if settings.provider == "openai_compatible" and settings.base_url not in allowed_base_urls():
-            raise AIError("The configured base URL is no longer allowed by the operator.")
-        provider = build_provider(settings.provider, api_key=key, model=settings.model, base_url=settings.base_url,
-                                  timeout=float(current_app.config.get("AI_TIMEOUT_SECONDS", 120)))
-    except (AIError, crypto.CredentialDecryptionError) as exc:
+    except crypto.CredentialDecryptionError as exc:
+        raise AIError(str(exc)) from exc
+    if settings.provider == "openai_compatible" and settings.base_url not in allowed_base_urls():
+        raise AIError("The configured base URL is no longer allowed by the operator.")
+    return build_provider(settings.provider, api_key=key, model=settings.model, base_url=settings.base_url,
+                          timeout=float(current_app.config.get("AI_TIMEOUT_SECONDS", 120)))
+
+
+def build_enricher(organization_id):
+    """Return an Enricher for the org, None when AI is disabled, or an object reporting a config error."""
+    try:
+        provider = build_ai_provider(organization_id)
+    except AIError as exc:
         return _BrokenEnricher(str(exc))
-    return Enricher(provider, max_findings=settings.max_findings)
+    if provider is None:
+        return None
+    return Enricher(provider, max_findings=get_settings(organization_id).max_findings)
 
 
 class _BrokenEnricher:

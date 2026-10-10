@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Audit policy{% endblock %}
+{% block content %}
+<div class="page">
+  <header class="page-head">
+    <div>
+      <p class="trail">settings<span class="sep">/</span>policy{% if repo %}<span class="sep">/</span>{{ repo.name }}{% endif %}</p>
+      <h1 class="page-title"><i class="bi bi-sliders" aria-hidden="true"></i> Audit policy{% if repo %} · {{ repo.name }}{% endif %}</h1>
+      <p class="page-lede">Policies decide which findings count, how severe they are, and when a gate (CI, GitHub check run) fails. They layer: <strong>organization</strong> ← <strong>repository</strong> ← the repository's <code>.eval.toml</code>. Scalars from a later layer win; lists add up.</p>
+    </div>
+  </header>
+
+  <div class="split">
+    <section class="pane" aria-labelledby="pol-h">
+      <div class="pane-bar"><h2 id="pol-h">{{ 'Repository override' if repo else 'Organization default' }}</h2>{% if not can_manage %}<span class="pane-aside">read only · admins can edit</span>{% endif %}</div>
+      <div class="pane-body">
+        <form method="post" class="form-grid">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          {% if repo %}<input type="hidden" name="repo" value="{{ repo.id }}">{% endif %}
+          <div>
+            <label class="form-label" for="pol-text">Policy (TOML)</label>
+            <textarea id="pol-text" name="policy_toml" class="form-control mono" rows="18" spellcheck="false" placeholder="{{ template }}" {% if not can_manage %}readonly{% endif %}>{{ text }}</textarea>
+          </div>
+          {% if not repo %}
+          <div class="form-check"><input class="form-check-input" type="checkbox" name="allow_repo_policy_file" id="allow-file" {% if g.org.allow_repo_policy_file %}checked{% endif %} {% if not can_manage %}disabled{% endif %}><label class="form-check-label" for="allow-file">Apply repositories' <code>.eval.toml</code> files (ignored on pull requests that change them)</label></div>
+          {% endif %}
+          {% if can_manage %}<div class="form-acts"><button class="btn-ink">Save policy</button></div>{% endif %}
+        </form>
+      </div>
+    </section>
+    <section class="pane" aria-labelledby="scope-h">
+      <div class="pane-bar"><h2 id="scope-h">Scope</h2></div>
+      <div class="pane-body">
+        <ul class="flist">
+          <li>{% if repo %}<a href="{{ url_for('integrations.policy', org_slug=g.org.slug) }}">Organization default</a>{% else %}<b>Organization default</b>{% endif %}</li>
+          {% for r in repos %}<li>{% if repo and r.id == repo.id %}<b>{{ r.name }}</b>{% else %}<a href="{{ url_for('integrations.policy', org_slug=g.org.slug, repo=r.id) }}">{{ r.name }}</a>{% endif %}{% if r.policy_toml %} <span class="reg-sub">override</span>{% endif %}</li>{% endfor %}
+        </ul>
+        <pre class="pane-note mono small">{{ template }}</pre>
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock %}

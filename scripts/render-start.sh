@@ -23,7 +23,9 @@ fi
 
 mkdir -p "${EVAL_WORK_DIR:-$DATA_DIR/work}"
 
-celery -A eval_app.celery_worker:celery worker -Q audits --loglevel=INFO \
+# -B embeds the beat scheduler (scheduled re-audits); safe because this service runs exactly one instance.
+celery -A eval_app.celery_worker:celery worker -Q audits --loglevel=INFO -B \
+  --schedule="${EVAL_WORK_DIR:-$DATA_DIR/work}/celerybeat-schedule" \
   --concurrency="${EVAL_WORKER_CONCURRENCY:-2}" --max-tasks-per-child=20 &
 gunicorn --bind "0.0.0.0:${PORT:-10000}" --workers "${WEB_CONCURRENCY:-2}" --access-logfile - wsgi:app &
 

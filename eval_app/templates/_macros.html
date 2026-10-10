@@ -10,6 +10,18 @@
   </div>
 {% endmacro %}
 
+{# "Continue with …" buttons for the configured social sign-in providers. #}
+{% macro social_buttons(providers, verb='Continue') %}
+  {% if providers %}
+  <div class="social-auth">
+    {% for p in providers %}
+    <a class="act social-btn" href="{{ url_for('auth.social_login', provider=p.key, next=request.args.get('next')) }}"><i class="bi {{ p.icon }}" aria-hidden="true"></i> {{ verb }} with {{ p.label }}</a>
+    {% endfor %}
+  </div>
+  <p class="or-rule">or with email</p>
+  {% endif %}
+{% endmacro %}
+
 {# Flash notes. Pages drawn as a sheet render these inside it, pinned under the frame. #}
 {% macro flash_notes() %}
   {% for category, message in get_flashed_messages(with_categories=true) %}

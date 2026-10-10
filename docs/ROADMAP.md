@@ -10,25 +10,20 @@
 | 4 | Audit dashboard, finding detail + triage, audit history, trends, commit comparison, portfolio dashboard, HTML/Markdown/JSON/SARIF reports, `eval-audit` CLI, GitHub issue creation |
 | 5 | AI provider abstraction (Anthropic, OpenAI, OpenAI-compatible/local), versioned prompts, injection-hardened enricher, per-org AI settings |
 | 6 (partial) | JSON API + tokens, pull-request audits with base-branch baselines, opt-in PR comments, CI gate script and GitHub Actions example |
+| 8 | Verified AI fix pull requests (re-audit of the patched tree), GitHub App (webhook PR/push audits, check runs with annotations, installation tokens), policies as code (org ← repo ← `.eval.toml`, per-path gates, required analyzers), AI-generated-code analyzer (undeclared/lookalike/non-existent packages, stubs, placeholders, hollow tests), PR change-risk score, Claude Code hook + MCP server + `--changed`, compliance mapping (CWE/OWASP/ASVS/SOC 2/ISO 27001) and evidence packs, scheduled re-audits with Slack/Teams/webhook regression alerts, TOTP MFA, OIDC SSO, SCIM, audit log UI, dependency reachability, intra-procedural taint analysis |
 | 7 (partial) | eVal Local ([LOCAL_AI.md](LOCAL_AI.md)): `eval-audit --ai local` (loopback-only model server, proxies ignored), `--offline` with network guard, small-model batching and output retry, AI-assisted triage ordering in reports, `eval-audit doctor`. Open: real-model benchmarks, `eval-audit serve` |
 
-Test suite: ~190 tests (unit + integration), run on SQLite and PostgreSQL.
+Test suite: ~430 tests (unit + integration), run on SQLite and PostgreSQL.
 
 ## Not built yet (honest list)
 
 **Product**
-- **Automated fix pull requests.** Deliberately not implemented. A safe design needs: a human approval step per
-  change, a generated branch + PR (never a push to the default branch), re-audit of the patched tree, and clear AI
-  provenance. AI "suggested patches" are displayed only.
-- **GitHub App + webhooks** (install-based access, automatic PR audits on `pull_request` events, check runs).
-  Today: personal access tokens + the CI script.
-- **Organization policies** (severity overrides, disabled rules, required analyzers, gate thresholds per repo).
-- **Repository knowledge graph.** The import graph is computed (`architecture.build_import_graph`) but not
-  persisted or visualised; no call graph or data-flow/taint analysis.
-- **PDF export.** HTML report prints well; native PDF needs a renderer.
-- Email invitations, email verification, password reset, MFA, SSO/SAML/SCIM.
+- **SAML SSO** (OIDC is supported) and SCIM groups-to-roles mapping.
+- **Repository knowledge graph.** The import graph is computed but not persisted or visualised; no call graph.
+- **Native PDF export.** The HTML report (also in the evidence pack) prints well; native PDF needs a renderer.
+- Email invitations, email verification, password reset.
 - Measured performance analysis (load tests, profiling) — performance findings are static estimates only.
-- More ecosystems for built-in checks and dependency parsing (Go, Java, Ruby, PHP, .NET); currently covered for
+- More ecosystems for built-in checks, reachability and taint (Go, Java, Ruby, PHP, .NET); currently covered for
   those only through Semgrep/Trivy when installed.
 
 **Platform / operations**
@@ -37,18 +32,16 @@ Test suite: ~190 tests (unit + integration), run on SQLite and PostgreSQL.
   DB-connected worker.
 - Upload/archive retention policies and storage on object storage (S3) instead of a local volume.
 - Structured logging/metrics/tracing (OpenTelemetry), audit-duration SLOs, Celery monitoring.
-- Scheduled audits (Celery beat) and stale-queue detection/alerting.
 - Usage metering, billing, quotas beyond the per-org concurrency limit.
 
 **Analysis quality**
-- Data-flow analysis for SQL injection / SSRF / path traversal (currently pattern-based; Semgrep rules help).
-- Framework-aware route/authorization mapping beyond Flask/FastAPI/Express heuristics.
-- Calibrating scoring weights against a labelled corpus of repositories.
+- Inter-procedural and cross-module taint tracking (today: within one function); JavaScript/TypeScript taint.
+- Call-graph reachability for dependency vulnerabilities (today: import level).
+- Calibrating scoring weights and the change-risk factors against a labelled corpus of repositories.
 
 ## Next steps (suggested order)
 
-1. GitHub App with webhook-triggered PR audits and check runs.
-2. Organization policies + per-repository gate thresholds.
-3. PostgreSQL RLS + sandbox separation (worker isolation).
-4. Approved fix PR workflow (human-in-the-loop) built on AI suggestions.
-5. Knowledge graph persistence and visualisation.
+1. PostgreSQL RLS + sandbox separation (worker isolation).
+2. SAML SSO via a vetted library; email invitations and verification.
+3. Cross-function taint and JavaScript taint; call-graph reachability.
+4. Knowledge graph persistence and visualisation.

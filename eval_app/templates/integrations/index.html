@@ -36,17 +36,41 @@
         </table>
         </div>
       </section>
+      <section class="pane" aria-labelledby="app-h">
+        <div class="pane-bar"><h2 id="app-h"><span><i class="bi bi-github" aria-hidden="true"></i> GitHub App</span></h2><span class="pane-aside">{{ installations|length }} linked</span></div>
+        <div class="pane-body">
+          <p class="mb-2">The App audits pull requests automatically, reports a <strong>check run</strong> with inline annotations (gated by your <a href="{{ url_for('integrations.policy', org_slug=g.org.slug) }}">policy</a>), and re-audits the default branch on push to keep PR baselines current. It uses short-lived tokens instead of personal access tokens.</p>
+          {% for inst in installations %}
+          <div class="d-flex align-items-center gap-2 mb-2">
+            <i class="bi bi-{{ 'building' if inst.account_type == 'Organization' else 'person' }}" aria-hidden="true"></i>
+            <b>{{ inst.account_login }}</b> <span class="reg-sub">#{{ inst.installation_id }} · linked {{ inst.created_at|dt }}</span>
+            {% if inst.suspended %}<span class="st st-cancelled">suspended</span>{% endif %}
+            {% if can_manage %}<form method="post" action="{{ url_for('github_app_org.unlink', org_slug=g.org.slug, inst_id=inst.id) }}" class="ms-auto">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+              <button class="act act-danger" data-confirm="Stop using this installation? Automatic PR audits for its repositories stop." data-confirm-ok="Unlink">Unlink</button>
+            </form>{% endif %}
+          </div>
+          {% endfor %}
+          {% if can_manage %}
+            {% if gh_app %}<a class="btn-ink" href="{{ url_for('github_app_org.install', org_slug=g.org.slug, csrf=csrf_token()) }}"><i class="bi bi-plus-lg" aria-hidden="true"></i> Install GitHub App</a>
+            {% else %}<p class="pane-note mt-0">Not configured on this server: set <code>GITHUB_APP_ID</code>, <code>GITHUB_APP_SLUG</code>, <code>GITHUB_APP_PRIVATE_KEY</code>, <code>GITHUB_APP_WEBHOOK_SECRET</code>, <code>GITHUB_APP_CLIENT_ID</code> and <code>GITHUB_APP_CLIENT_SECRET</code> (see docs/CI.md).</p>{% endif %}
+          {% endif %}
+        </div>
+      </section>
       {% include "integrations/_ai_settings.html" %}
     </div>
     {% if can_manage %}
     <section class="pane" aria-labelledby="ac-h">
       <div class="pane-bar"><h2 id="ac-h"><span><i class="bi bi-plus-lg" aria-hidden="true"></i> Add credential</span></h2></div>
       <div class="pane-body">
+        <a class="btn-ink is-block" href="{{ url_for('integrations.github_connect', org_slug=g.org.slug, csrf=csrf_token()) }}"><i class="bi bi-github" aria-hidden="true"></i> Connect GitHub</a>
+        {% if not gh_oauth %}<p class="pane-note">GitHub sign-in needs <code>GITHUB_OAUTH_CLIENT_ID</code> and <code>GITHUB_OAUTH_CLIENT_SECRET</code> configured.</p>{% endif %}
+        <p class="or-rule">or paste a token / API key</p>
         <form method="post" novalidate autocomplete="off" class="form-grid">
           {{ form.hidden_tag() }}{{ field(form.provider) }}{{ field(form.label) }}{{ field(form.secret) }}
           <div class="form-acts"><button class="btn-ink is-block">Save</button></div>
         </form>
-        <p class="pane-note">GitHub: use a fine-grained token limited to the repositories you audit, with <em>Contents: read</em> and (optionally) <em>Issues: write</em>.</p>
+        <p class="pane-note">GitHub: use a fine-grained token limited to the repositories you audit, with <em>Contents: read</em>. Optionally add <em>Issues: write</em> for issues, and <em>Contents: write</em> plus <em>Pull requests: write</em> for auto-fix pull requests.</p>
       </div>
     </section>
     {% endif %}

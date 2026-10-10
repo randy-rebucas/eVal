@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import field, flash_notes %}
+{% from "_macros.html" import field, flash_notes, social_buttons %}
 {% block title %}Register{% endblock %}
 {% block flashes %}{% endblock %}
 {% block content %}
@@ -24,6 +24,7 @@
       <h2>Create your eVal account</h2>
       <p class="auth-sub">You will be the owner of the new organization.</p>
       {{ flash_notes() }}
+      {{ social_buttons(social_providers, 'Sign up') }}
       {{ form.hidden_tag() }}
       {{ field(form.name) }}
       {{ field(form.email) }}

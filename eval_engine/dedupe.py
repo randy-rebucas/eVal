@@ -24,6 +24,9 @@ RULE_FAMILIES: dict[str, str] = {
     "bandit:B608": "sql-injection",
     "ruff:S608": "sql-injection",
     "eval:database.sql-string-formatting": "sql-injection",
+    "eval:taint.sql-injection": "sql-injection",
+    "eval:taint.command-injection": "shell-injection",
+    "eval:taint.code-injection": "eval-use",
     "bandit:B201": "flask-debug",
     "ruff:S201": "flask-debug",
     "eval:api.flask-debug-enabled": "flask-debug",
@@ -101,6 +104,10 @@ def merge_duplicates(findings: list[Finding]) -> list[Finding]:
         if _CONF_RANK[f.confidence] > _CONF_RANK[current.confidence]:
             current.confidence = f.confidence
             current.kind = f.kind
+        if f.rule_id.startswith("eval:taint.") and not current.rule_id.startswith("eval:taint."):
+            # A traced data flow is stronger evidence than a pattern match on the same line: keep its trace.
+            current.description, current.evidence, current.kind = f.description, f.evidence, f.kind
+            current.confidence = f.confidence
         for src in f.sources:
             if src not in current.sources:
                 current.sources.append(src)

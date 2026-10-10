@@ -46,6 +46,9 @@ def org_required(min_role: str = "viewer"):
             org, membership = found
             if not role_at_least(membership.role, min_role):
                 abort(403)
+            gate = _sign_in_requirement(org, membership)
+            if gate is not None:
+                return gate
             g.org = org
             g.membership = membership
             reopen_lapsed_triage(org.id)
@@ -54,6 +57,25 @@ def org_required(min_role: str = "viewer"):
         return wrapper
 
     return decorator
+
+
+def _sign_in_requirement(org, membership):
+    """A redirect when the session does not meet the organization's SSO or MFA requirement, else None.
+    Owners keep password access as break-glass, so a broken identity provider cannot lock everyone out."""
+    from flask import flash, redirect, request, session, url_for
+
+    from ..auth.mfa import satisfies_org_mfa
+    from ..auth.sso import connection_for
+
+    conn = connection_for(org)
+    if conn is not None and conn.enabled and conn.enforce and membership.role != "owner" \
+            and session.get("sso_org") != str(org.id):
+        flash(f"{org.name} requires single sign-on.", "warning")
+        return redirect(url_for("sso.start_org", org_slug=org.slug, next=request.path))
+    if not satisfies_org_mfa(org):
+        flash(f"{org.name} requires two-factor authentication. Set it up to continue.", "warning")
+        return redirect(url_for("mfa.settings"))
+    return None
 
 
 def reopen_lapsed_triage(organization_id) -> None:

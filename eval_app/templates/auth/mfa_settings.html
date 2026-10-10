@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Two-factor authentication{% endblock %}
+{% block content %}
+<div class="page">
+  <header class="page-head">
+    <div>
+      <p class="trail"><a href="{{ url_for('auth.account') }}">account</a><span class="sep">/</span>two-factor</p>
+      <h1 class="page-title"><i class="bi bi-shield-lock" aria-hidden="true"></i> Two-factor authentication <span class="st st-{{ 'succeeded' if current_user.mfa_enabled else 'cancelled' }}">{{ 'on' if current_user.mfa_enabled else 'off' }}</span></h1>
+      <p class="page-lede">An authenticator app (1Password, Google Authenticator, Authy, …) adds a time-based code to password and social sign-in. Sign-in through your organization's SSO uses your identity provider's second factor instead.</p>
+    </div>
+  </header>
+
+  {% if recovery_codes %}
+  <div class="reveal" role="status">
+    <p>Recovery codes: each works once if you lose your device. Store them somewhere safe now; they will not be shown again.</p>
+    <pre class="mono user-select-all">{{ recovery_codes|join('\n') }}</pre>
+  </div>
+  {% endif %}
+
+  <section class="pane" aria-labelledby="mfa-h">
+    <div class="pane-bar"><h2 id="mfa-h">{{ 'Manage' if current_user.mfa_enabled else 'Set up' }}</h2>{% if current_user.mfa_enabled %}<span class="pane-aside">enabled {{ current_user.mfa_enabled_at|dt }} · {{ remaining }} recovery code(s) left</span>{% endif %}</div>
+    <div class="pane-body">
+      {% if current_user.mfa_enabled %}
+        <form method="post" class="form-inline" autocomplete="off">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div><label class="form-label" for="m-code">Current code</label><input id="m-code" name="code" class="form-control form-control-sm mono" inputmode="numeric" maxlength="20" required></div>
+          <button class="act" name="action" value="recovery">New recovery codes</button>
+          <button class="act act-danger" name="action" value="disable" data-confirm="Turn off two-factor authentication?" data-confirm-ok="Turn off">Turn off</button>
+        </form>
+      {% elif setup_secret %}
+        <ol class="mb-3">
+          <li>Add an account in your authenticator app with this setup key (or open the link on your phone):<br>
+            <code class="user-select-all mono">{{ setup_secret }}</code><br><a class="small" href="{{ uri }}">{{ uri }}</a></li>
+          <li>Enter the 6-digit code it shows.</li>
+        </ol>
+        <form method="post" class="form-inline" autocomplete="off">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div><label class="form-label" for="m-new">Code</label><input id="m-new" name="code" class="form-control form-control-sm mono" inputmode="numeric" autocomplete="one-time-code" maxlength="6" required autofocus></div>
+          <button class="btn-ink" name="action" value="enable">Turn on</button>
+        </form>
+      {% else %}
+        <form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn-ink" name="action" value="start"><i class="bi bi-plus-lg" aria-hidden="true"></i> Set up authenticator app</button></form>
+      {% endif %}
+    </div>
+  </section>
+</div>
+{% endblock %}

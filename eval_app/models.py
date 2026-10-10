@@ -21,6 +21,10 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+# Not a valid werkzeug hash, so nothing can match it.
+UNUSABLE_PASSWORD = "!unusable"  # noqa: S105  # nosec B105 - a marker, not a credential
+
+
 def _uuid() -> uuid.UUID:
     return uuid.uuid4()
 
@@ -47,13 +51,38 @@ class User(UserMixin, TimestampMixin, db.Model):
     password_hash: Mapped[str] = mapped_column(sa.String(255), nullable=False)
     is_active_flag: Mapped[bool] = mapped_column("is_active", sa.Boolean, default=True, nullable=False)
     last_login_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    # TOTP second factor (RFC 6238): encrypted secret, recovery-code hashes, last accepted time step (replay guard).
+    mfa_secret_enc: Mapped[bytes | None] = mapped_column(sa.LargeBinary)
+    mfa_enabled_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    mfa_recovery: Mapped[list] = mapped_column(sa.JSON, nullable=False, default=list, server_default="[]")
+    mfa_last_step: Mapped[int | None] = mapped_column(sa.BigInteger)
+    # Set when an organization created this account through SCIM or SSO; only that organization's SSO may link it.
+    managed_by_org_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.ForeignKey("organizations.id", ondelete="SET NULL"), index=True
+    )
 
-    memberships: Mapped[list[Membership]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    memberships: Mapped[list[Membership]] = relationship(back_populates="user", cascade="all, delete-orphan",
+                                                         foreign_keys="Membership.user_id")
+    identities: Mapped[list[UserIdentity]] = relationship(back_populates="user", cascade="all, delete-orphan")
+
+    @property
+    def mfa_enabled(self) -> bool:
+        return self.mfa_enabled_at is not None and self.mfa_secret_enc is not None
 
     def set_password(self, password: str) -> None:
         self.password_hash = generate_password_hash(password, method="scrypt")
 
+    def set_unusable_password(self) -> None:
+        """Accounts created through social sign-in have no password; password login always fails for them."""
+        self.password_hash = UNUSABLE_PASSWORD
+
+    @property
+    def has_password(self) -> bool:
+        return self.password_hash != UNUSABLE_PASSWORD
+
     def check_password(self, password: str) -> bool:
+        if not self.has_password:
+            return False
         return check_password_hash(self.password_hash, password)
 
     @property
@@ -64,12 +93,39 @@ class User(UserMixin, TimestampMixin, db.Model):
         return str(self.id)
 
 
+class UserIdentity(TimestampMixin, db.Model):
+    """A GitHub, Google or LinkedIn account the user signs in with, keyed by the provider's stable user id."""
+
+    __tablename__ = "user_identities"
+    __table_args__ = (
+        sa.UniqueConstraint("provider", "subject", name="uq_user_identities_provider_subject"),
+        sa.UniqueConstraint("user_id", "provider", name="uq_user_identities_user_provider"),
+        sa.CheckConstraint("provider IN ('github','google','linkedin')", name="provider_valid"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False,
+                                               index=True)
+    provider: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    subject: Mapped[str] = mapped_column(sa.String(255), nullable=False)
+    email: Mapped[str] = mapped_column(sa.String(320), nullable=False, default="")
+    last_login_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+    user: Mapped[User] = relationship(back_populates="identities")
+
+
 class Organization(TimestampMixin, db.Model):
     __tablename__ = "organizations"
 
     id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(sa.String(120), nullable=False)
     slug: Mapped[str] = mapped_column(sa.String(64), unique=True, nullable=False, index=True)
+    # Default audit policy (TOML, see eval_engine/policy.py) and whether repositories' .eval.toml files apply.
+    policy_toml: Mapped[str] = mapped_column(sa.Text, nullable=False, default="", server_default="")
+    allow_repo_policy_file: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=True,
+                                                         server_default=sa.true())
+    # Members must have a second factor: TOTP, or a sign-in through this organization's SSO.
+    require_mfa: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False, server_default=sa.false())
 
     memberships: Mapped[list[Membership]] = relationship(
         back_populates="organization", cascade="all, delete-orphan"
@@ -138,6 +194,95 @@ class IntegrationCredential(TenantMixin, TimestampMixin, db.Model):
     )
 
 
+class SsoConnection(TenantMixin, TimestampMixin, db.Model):
+    """An organization's OpenID Connect identity provider (Okta, Entra ID, Google Workspace, Keycloak, ...)."""
+
+    __tablename__ = "sso_connections"
+    __table_args__ = (sa.CheckConstraint("default_role IN ('viewer','member','admin')", name="role_valid"),)
+
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        sa.ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    issuer: Mapped[str] = mapped_column(sa.String(500), nullable=False)
+    client_id: Mapped[str] = mapped_column(sa.String(255), nullable=False)
+    encrypted_client_secret: Mapped[bytes] = mapped_column(sa.LargeBinary, nullable=False)
+    # Email domains this IdP is authoritative for; SSO users must have an address in one of them.
+    domains: Mapped[list] = mapped_column(sa.JSON, nullable=False, default=list)
+    default_role: Mapped[str] = mapped_column(sa.String(16), nullable=False, default="member")
+    auto_provision: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=True)
+    # Members must sign in through SSO to use this organization (owners keep password access as break-glass).
+    enforce: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False)
+    enabled: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=True)
+
+
+class SsoIdentity(TimestampMixin, db.Model):
+    __tablename__ = "sso_identities"
+    __table_args__ = (sa.UniqueConstraint("connection_id", "subject", name="uq_sso_identities_connection_subject"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    connection_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("sso_connections.id", ondelete="CASCADE"),
+                                                     nullable=False, index=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False,
+                                               index=True)
+    subject: Mapped[str] = mapped_column(sa.String(255), nullable=False)
+    last_login_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+    user: Mapped[User] = relationship()
+
+
+class ScimToken(TenantMixin, TimestampMixin, db.Model):
+    """Bearer token for SCIM 2.0 provisioning (only a SHA-256 hash is stored)."""
+
+    __tablename__ = "scim_tokens"
+
+    organization_id: Mapped[uuid.UUID] = org_fk()
+    prefix: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    token_hash: Mapped[str] = mapped_column(sa.String(64), unique=True, nullable=False)
+    created_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    last_used_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+
+class GitHubInstallation(TenantMixin, TimestampMixin, db.Model):
+    """A GitHub App installation linked to an organization. Tokens are minted per use, never stored."""
+
+    __tablename__ = "github_installations"
+
+    organization_id: Mapped[uuid.UUID] = org_fk()
+    # GitHub's id; unique, so one installation can never serve two organizations.
+    installation_id: Mapped[int] = mapped_column(sa.BigInteger, unique=True, nullable=False)
+    account_login: Mapped[str] = mapped_column(sa.String(200), nullable=False, default="")
+    account_type: Mapped[str] = mapped_column(sa.String(32), nullable=False, default="")
+    suspended: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False)
+    created_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+
+
+class NotificationChannel(TenantMixin, TimestampMixin, db.Model):
+    """Where an organization is told about regressions: a Slack or Teams incoming webhook, or a signed generic
+    webhook. The URL is a secret (it authorizes posting) and is stored encrypted."""
+
+    __tablename__ = "notification_channels"
+    __table_args__ = (sa.CheckConstraint("kind IN ('slack','teams','webhook')", name="kind_valid"),)
+
+    organization_id: Mapped[uuid.UUID] = org_fk()
+    kind: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    label: Mapped[str] = mapped_column(sa.String(120), nullable=False, default="")
+    encrypted_url: Mapped[bytes] = mapped_column(sa.LargeBinary, nullable=False)
+    url_host: Mapped[str] = mapped_column(sa.String(255), nullable=False, default="")  # shown instead of the URL
+    # Generic webhooks: HMAC-SHA256 signing secret (encrypted); receivers verify X-Eval-Signature.
+    encrypted_secret: Mapped[bytes | None] = mapped_column(sa.LargeBinary)
+    events: Mapped[list] = mapped_column(sa.JSON, nullable=False, default=list)
+    enabled: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=True)
+    last_status: Mapped[str] = mapped_column(sa.String(200), nullable=False, default="")
+    created_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+
+
 class Repository(TenantMixin, TimestampMixin, db.Model):
     __tablename__ = "repositories"
     __table_args__ = (sa.CheckConstraint("source IN ('github','upload')", name="source_valid"),)
@@ -152,9 +297,20 @@ class Repository(TenantMixin, TimestampMixin, db.Model):
     credential_id: Mapped[uuid.UUID | None] = mapped_column(
         sa.ForeignKey("integration_credentials.id", ondelete="SET NULL"), index=True
     )
+    policy_toml: Mapped[str] = mapped_column(sa.Text, nullable=False, default="", server_default="")
+    # GitHub App installation that grants access (preferred over ``credential`` when set).
+    github_installation_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.ForeignKey("github_installations.id", ondelete="SET NULL"), index=True
+    )
+    # Audit pull requests automatically when the GitHub App reports them (and the default branch on push).
+    auto_audit: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=True, server_default=sa.true())
+    # Periodic re-audit of the default branch (or latest upload): off | daily | weekly. New CVEs appear in code
+    # nobody touched, so a quiet repository still needs re-checking.
+    schedule: Mapped[str] = mapped_column(sa.String(16), nullable=False, default="off", server_default="off")
 
     project: Mapped[Project] = relationship(back_populates="repositories")
     credential: Mapped[IntegrationCredential | None] = relationship()
+    installation: Mapped[GitHubInstallation | None] = relationship()
     audits: Mapped[list[Audit]] = relationship(
         back_populates="repository", cascade="all, delete-orphan", order_by="Audit.created_at.desc()"
     )
@@ -205,6 +361,7 @@ class Audit(TenantMixin, TimestampMixin, db.Model):
     pr_number: Mapped[int | None] = mapped_column(sa.Integer)
     pr_base_ref: Mapped[str] = mapped_column(sa.String(255), nullable=False, default="")
     changed_files: Mapped[list] = mapped_column(sa.JSON, nullable=False, default=list)
+    check_run_id: Mapped[int | None] = mapped_column(sa.BigInteger)  # GitHub check run reporting this audit
 
     status: Mapped[str] = mapped_column(sa.String(16), nullable=False, default="queued", index=True)
     stage: Mapped[str] = mapped_column(sa.String(64), nullable=False, default="queued")
@@ -220,6 +377,8 @@ class Audit(TenantMixin, TimestampMixin, db.Model):
     languages: Mapped[dict] = mapped_column(sa.JSON, nullable=False, default=dict)
     stats: Mapped[dict] = mapped_column(sa.JSON, nullable=False, default=dict)
     ai_summary: Mapped[dict] = mapped_column(sa.JSON, nullable=False, default=dict)
+    # Effective policy the audit ran with (eval_engine.policy.Policy.to_dict()); gates are evaluated against it.
+    policy: Mapped[dict] = mapped_column(sa.JSON, nullable=False, default=dict, server_default="{}")
     engine_version: Mapped[str] = mapped_column(sa.String(32), nullable=False, default="")
 
     started_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
@@ -247,6 +406,43 @@ class Rule(db.Model):
     category: Mapped[str] = mapped_column(sa.String(32), nullable=False)
     default_severity: Mapped[str] = mapped_column(sa.String(16), nullable=False)
     references: Mapped[list] = mapped_column(sa.JSON, nullable=False, default=list)
+
+
+class FixProposal(TenantMixin, TimestampMixin, db.Model):
+    """AI-generated fix for selected findings: a reviewed diff that can become a GitHub pull request."""
+
+    __tablename__ = "fix_proposals"
+    __table_args__ = (
+        sa.CheckConstraint("status IN ('queued','running','ready','failed','pr_opened')", name="status_valid"),
+    )
+
+    organization_id: Mapped[uuid.UUID] = org_fk()
+    audit_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("audits.id", ondelete="CASCADE"), index=True)
+    created_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
+    status: Mapped[str] = mapped_column(sa.String(16), nullable=False, default="queued")
+    finding_ids: Mapped[list] = mapped_column(sa.JSON, nullable=False, default=list)
+    # [{"path", "blob_sha", "after"}]: the new content of each changed file, and the blob it replaces.
+    files: Mapped[list] = mapped_column(sa.JSON, nullable=False, default=list)
+    diff: Mapped[str] = mapped_column(sa.Text, nullable=False, default="")
+    # {"fixed": [{"id", "summary", "files"}], "failed": [{"id", "reason"}]}
+    results: Mapped[dict] = mapped_column(sa.JSON, nullable=False, default=dict)
+    ai_model: Mapped[str] = mapped_column(sa.String(160), nullable=False, default="")
+    # Re-audit of the patched tree (eval_engine.verify.Verification.to_dict(), or {"verdict": "error", "error"}).
+    verification: Mapped[dict] = mapped_column(sa.JSON, nullable=False, default=dict, server_default="{}")
+    error: Mapped[str] = mapped_column(sa.Text, nullable=False, default="")
+    branch: Mapped[str] = mapped_column(sa.String(255), nullable=False, default="")
+    pr_number: Mapped[int | None] = mapped_column(sa.Integer)
+    pr_url: Mapped[str] = mapped_column(sa.String(500), nullable=False, default="")
+    finished_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+    audit: Mapped[Audit] = relationship()
+    created_by: Mapped[User | None] = relationship()
+
+    @property
+    def is_finished(self) -> bool:
+        return self.status not in ("queued", "running")
 
 
 class Finding(TenantMixin, TimestampMixin, db.Model):
@@ -290,6 +486,8 @@ class Finding(TenantMixin, TimestampMixin, db.Model):
     )
     triaged_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     ai_explanation: Mapped[dict] = mapped_column(sa.JSON, nullable=False, default=dict)
+    # Dependency vulnerabilities: imported | not-imported | transitive (eval_engine.reachability); "" otherwise.
+    reachability: Mapped[str] = mapped_column(sa.String(16), nullable=False, default="", server_default="")
 
     audit: Mapped[Audit] = relationship(back_populates="findings")
     triaged_by: Mapped[User | None] = relationship()

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import field, flash_notes %}
+{% from "_macros.html" import field, flash_notes, social_buttons %}
 {% block title %}Log in{% endblock %}
 {% block flashes %}{% endblock %}
 {% block content %}
@@ -26,11 +26,13 @@
       <h2>Log in to eVal</h2>
       <p class="auth-sub">AI generates code. eVal verifies it.</p>
       {{ flash_notes() }}
+      {{ social_buttons(social_providers) }}
       {{ form.hidden_tag() }}
       {{ field(form.email) }}
       {{ field(form.password) }}
       <button class="btn-ink auth-submit">Log in</button>
     </form>
+    <p class="auth-alt"><a href="{{ url_for('sso.start') }}"><i class="bi bi-building-lock" aria-hidden="true"></i> Sign in with SSO</a></p>
     {% if config.ALLOW_REGISTRATION %}<p class="auth-alt">No account? <a href="{{ url_for('auth.register') }}">Register</a></p>{% endif %}
   </div>
 </div>

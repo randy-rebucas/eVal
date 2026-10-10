@@ -78,6 +78,7 @@
       <section class="pane" aria-labelledby="gha-h">
         <div class="pane-bar"><h2 id="gha-h"><span><i class="bi bi-key" aria-hidden="true"></i> GitHub access</span></h2></div>
         <div class="pane-body">
+          {% if repo.installation %}<p class="mb-2"><i class="bi bi-github" aria-hidden="true"></i> GitHub App: <strong>{{ repo.installation.account_login }}</strong>{% if repo.installation.suspended %} <span class="st st-cancelled">suspended</span>{% endif %} <span class="reg-sub">(preferred over the credential; pull requests are audited automatically{% if not repo.auto_audit %}, currently off{% endif %})</span></p>{% endif %}
           <p class="mb-3">Credential: {% if repo.credential %}<strong>{{ repo.credential.label }}</strong> <span class="mono">…{{ repo.credential.last4 }}</span>{% else %}<span class="text-muted">none (public access only; issue creation disabled)</span>{% endif %}</p>
           {% if g.membership.role in ['admin', 'owner'] %}
           <form method="post" action="{{ url_for('repos.set_credential', org_slug=g.org.slug, repo_id=repo.id) }}" class="form-inline">
@@ -92,6 +93,24 @@
         </div>
       </section>
       {% endif %}
+
+      <section class="pane" aria-labelledby="auto-h">
+        <div class="pane-bar"><h2 id="auto-h"><span><i class="bi bi-clock-history" aria-hidden="true"></i> Automation</span></h2><a class="pane-aside" href="{{ url_for('integrations.policy', org_slug=g.org.slug, repo=repo.id) }}">policy{% if repo.policy_toml %} (override){% endif %}</a></div>
+        <div class="pane-body">
+          {% if g.membership.role in ['admin', 'owner'] %}
+          <form method="post" action="{{ url_for('repos.automation', org_slug=g.org.slug, repo_id=repo.id) }}" class="form-inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div><label class="form-label" for="r-sched">Re-audit {{ 'the default branch' if repo.source == 'github' else 'the latest upload' }}</label>
+              <select id="r-sched" name="schedule" class="form-select form-select-sm">
+                {% for value, label in [('off', 'Never'), ('daily', 'Daily'), ('weekly', 'Weekly')] %}<option value="{{ value }}" {% if repo.schedule == value %}selected{% endif %}>{{ label }}</option>{% endfor %}
+              </select></div>
+            {% if repo.source == 'github' %}<div class="form-check"><input class="form-check-input" type="checkbox" name="auto_audit" id="r-auto" {% if repo.auto_audit %}checked{% endif %}><label class="form-check-label" for="r-auto">Audit pull requests and pushes (GitHub App)</label></div>{% endif %}
+            <button class="act">Save</button>
+          </form>
+          {% else %}<p class="mb-0">Re-audit: <strong>{{ repo.schedule }}</strong>{% if repo.source == 'github' %} · automatic PR audits: <strong>{{ 'on' if repo.auto_audit else 'off' }}</strong>{% endif %}</p>{% endif %}
+          <p class="pane-note">Scheduled audits catch newly published vulnerabilities in code nobody changed; regressions are sent to your <a href="{{ url_for('integrations.notifications', org_slug=g.org.slug) }}">notification channels</a>.</p>
+        </div>
+      </section>
     </div>
 
     <section class="pane" aria-labelledby="hist-h">

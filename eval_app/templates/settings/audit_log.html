@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Audit log{% endblock %}
+{% block content %}
+<div class="page">
+  <header class="page-head">
+    <div>
+      <p class="trail">settings<span class="sep">/</span>audit log</p>
+      <h1 class="page-title"><i class="bi bi-journal-text" aria-hidden="true"></i> Audit log</h1>
+      <p class="page-lede">Who did what in <strong>{{ g.org.name }}</strong>: sign-ins, membership and role changes, credentials, policies, triage decisions, exports, SSO and SCIM. Secrets are never recorded.</p>
+    </div>
+    <div class="page-acts"><a class="act" href="{{ url_for('security_settings.audit_log_csv', org_slug=g.org.slug, action=action or None) }}"><i class="bi bi-download" aria-hidden="true"></i> Export CSV</a></div>
+  </header>
+
+  <section class="pane" aria-labelledby="log-h">
+    <div class="pane-bar"><h2 id="log-h">Events</h2>
+      <form method="get" class="form-inline"><label class="visually-hidden" for="log-f">Action prefix</label><input id="log-f" name="action" class="form-control form-control-sm" value="{{ action }}" placeholder="e.g. auth. or finding."><button class="act">Filter</button></form>
+    </div>
+    <div class="register-wrap">
+    <table class="register register-log">
+      <thead><tr><th>Time</th><th>Action</th><th>Actor</th><th>Target</th><th>Details</th><th>IP</th></tr></thead>
+      <tbody>
+      {% for e in page.items %}
+        <tr>
+          <td class="fig" data-label="Time">{{ e.created_at|dt }}</td>
+          <td data-label="Action"><span class="tag">{{ e.action }}</span></td>
+          <td data-label="Actor">{{ actors.get(e.actor_id, '—') }}</td>
+          <td class="mono small" data-label="Target">{{ e.target_type }}{% if e.target_id %} {{ e.target_id[:8] }}{% endif %}</td>
+          <td class="small" data-label="Details">{% for k, v in e.details.items() %}{{ k }}={{ v }}{{ ' · ' if not loop.last }}{% endfor %}</td>
+          <td class="mono small" data-label="IP">{{ e.ip }}</td>
+        </tr>
+      {% else %}<tr><td colspan="6" class="empty">No events.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+    </div>
+    {% if page.pages > 1 %}<p class="pane-note px-3 pb-3">Page {{ page.page }} of {{ page.pages }}
+      {% if page.has_prev %}· <a href="{{ url_for('security_settings.audit_log', org_slug=g.org.slug, page=page.prev_num, action=action or None) }}">newer</a>{% endif %}
+      {% if page.has_next %}· <a href="{{ url_for('security_settings.audit_log', org_slug=g.org.slug, page=page.next_num, action=action or None) }}">older</a>{% endif %}</p>{% endif %}
+  </section>
+</div>
+{% endblock %}

@@ -53,13 +53,34 @@ def create_app(config_name: str | None = None, overrides: dict | None = None) ->
     from .audits.routes import bp as audits_bp
     from .auth.routes import bp as auth_bp
     from .findings.routes import bp as findings_bp
+    from .fixes.routes import bp as fixes_bp
     from .integrations.routes import bp as integrations_bp
+    from .integrations.routes import oauth_bp as github_oauth_bp
     from .orgs.routes import bp as orgs_bp
     from .projects.repo_routes import bp as repos_bp
     from .projects.routes import bp as projects_bp
 
-    for bp in (auth_bp, orgs_bp, projects_bp, repos_bp, audits_bp, findings_bp, integrations_bp):
+    for bp in (auth_bp, orgs_bp, projects_bp, repos_bp, audits_bp, findings_bp, integrations_bp, github_oauth_bp,
+               fixes_bp):
         app.register_blueprint(bp)
+
+    from .auth.mfa import bp as mfa_bp
+    from .auth.sso_routes import bp as sso_bp
+    from .scim import bp as scim_bp
+    from .security_settings import bp as security_settings_bp
+
+    app.register_blueprint(mfa_bp)
+    app.register_blueprint(sso_bp)
+    app.register_blueprint(scim_bp)
+    app.register_blueprint(security_settings_bp)
+    csrf.exempt(scim_bp)  # bearer-token API, no cookies
+    from .integrations.app_routes import org_bp as github_app_org_bp
+    from .integrations.app_routes import setup_bp as github_app_setup_bp
+    from .integrations.app_routes import webhook_bp as github_webhook_bp
+
+    for bp in (github_app_org_bp, github_app_setup_bp, github_webhook_bp):
+        app.register_blueprint(bp)
+    csrf.exempt(github_webhook_bp)  # authenticated by the HMAC signature, not cookies
 
     from .api.routes import bp as api_bp
 

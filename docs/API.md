@@ -66,12 +66,18 @@ the latest successful audit of the PR's base branch. Returns **202** `{"audit": 
              "findings": 4, "duration": 1.2, "categories": ["security"], "tool": "bandit"}],
   "languages": {"files_by_language": {"python": 12}, "frameworks": ["flask"], "primary": "python"},
   "ai_summary": {"summary": "…", "top_risks": ["…"], "model": "claude-opus-5-5"},
+  "gate": {"passed": false, "fail_on": "high", "blocking": 1,
+           "reasons": ["1 finding(s) at or above the gate threshold"], "policy": {"gate": {"…": "…"}, "sources": []}},
   "pull_request": {"pr_number": 5, "base_ref": "main", "changed_files": 3, "baseline_audit_id": "…",
-                   "introduced_counts": {"critical": 0, "high": 1, "medium": 0, "low": 0, "info": 0}}
+                   "introduced_counts": {"critical": 0, "high": 1, "medium": 0, "low": 0, "info": 0},
+                   "change_risk": {"score": 40, "level": "medium",
+                                   "factors": [{"factor": "tests", "points": 15, "detail": "…"}]}}
 }}
 ```
-`scores`, `lifecycle`, `tools`, `languages`, `ai_summary` appear once the audit succeeded; `pull_request` only
-for PR audits. Categories with `"assessed": false` have `"score": null` — they were not analysed.
+`scores`, `lifecycle`, `tools`, `languages`, `ai_summary`, `gate` appear once the audit succeeded; `pull_request`
+only for PR audits. `gate` is evaluated against the policy stored with the audit and the current triage state (PR
+audits: findings introduced in changed files; other audits: open findings), which is what
+`scripts/eval_ci.py --fail-on policy` uses. Categories with `"assessed": false` have `"score": null` — they were not analysed.
 
 ### `GET /api/v1/audits/{audit_id}/findings`
 Query parameters: `severity`, `category`, `kind` (`confirmed|potential|estimate|ai_observation`), `lifecycle`
@@ -115,6 +121,21 @@ GitHub code scanning (`github/codeql-action/upload-sarif`).
 ### `POST /api/v1/audits/{audit_id}/pr-comment` (member)
 Posts the PR summary as a comment on the pull request (requires a repository credential with PR/Issues write).
 Explicit opt-in; never automatic. Returns **201** `{"comment_url": "…"}`.
+
+Each finding in `/findings` responses also carries `compliance` (`{"cwe", "owasp", "asvs", "soc2", "iso27001"}`)
+and, for dependency vulnerabilities, `reachability` (`imported` | `not-imported` | `transitive`).
+
+### `GET /o/{org}/audits/{audit_id}/evidence.zip` (web session)
+Evidence pack: HTML/JSON/SARIF reports, `findings.csv`, `compliance-controls.csv`, `risk-register.csv`,
+`decisions.csv`, `policy.json`, `coverage.json` and `manifest.json` with the SHA-256 of every file.
+
+### SCIM 2.0: `/scim/v2/...`
+`Authorization: Bearer scim_…` (Settings → Security). `GET/POST /Users`, `GET/PUT/PATCH/DELETE /Users/{id}`,
+`GET /ServiceProviderConfig`; `filter=userName eq "…"`; `active: false` or DELETE removes the membership. See
+SECURITY.md §6a.
+
+### Webhooks: `POST /webhooks/github`
+GitHub App deliveries (`pull_request`, `push`, `check_run`, `installation`), signed with `X-Hub-Signature-256`.
 
 ## 3. Example
 

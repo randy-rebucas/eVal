@@ -102,3 +102,19 @@ It survives unrelated edits that shift line numbers. Equivalent rules from diffe
 
 The baseline is the latest successful audit of the **same branch** (falling back to any branch); for pull-request
 audits it is the latest audit of the PR's **base branch**. Pull-request audits never become a baseline.
+
+## 7. What can change a score (and what cannot)
+
+* **Policies** (`.eval.toml`, organization and repository policies; see [CI.md](CI.md#e-policies-evaltoml)) are
+  applied *before* scoring: excluded paths and disabled rules remove findings, severity overrides change them, and
+  disabled analyzers leave their categories *not assessed*. The effective policy and its digest are stored with each
+  audit (`audit.policy`, `stats.policy`), so every score can be traced to the policy that produced it.
+* **Dependency reachability** lowers the *confidence* (never the severity) of a vulnerable package the application
+  code does not import: `not-imported` (declared, unused) and `transitive` vulnerabilities count with the factor of
+  the next lower confidence level. Imported packages are unchanged.
+* **Taint analysis** findings are `confirmed`/`high` (a traced flow from request data to the sink). When a pattern
+  rule fires on the same line (e.g. the SQL-string rule), the two merge and the finding keeps the traced flow.
+* **AI** output never changes scores, severities or kinds.
+* **Change risk** (pull requests) is a separate 0–100 indicator of how much review a change deserves (size,
+  sensitive areas, untested code, introduced findings, AI-code patterns; factors in `eval_engine/change_risk.py`).
+  It never changes the audit score; a policy may gate on it (`gate.max_change_risk`).

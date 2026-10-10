@@ -5,6 +5,7 @@ from datetime import timedelta
 from flask import Blueprint, abort, current_app, flash, g, redirect, render_template, request, url_for
 from flask_login import current_user
 
+from .. import ai_config
 from ..extensions import db
 from ..models import TRIAGE_STATUSES, Audit, Finding
 from ..security.tenancy import get_scoped_or_404, org_required, parse_uuid_or_404
@@ -26,6 +27,9 @@ def detail(org_slug, finding_id):
     ).all()
     return render_template("findings/detail.html", f=finding, audit=finding.audit, issue=issue, history=history,
                            triage_statuses=TRIAGE_STATUSES, today=services.today(),
+                           ai_fix=ai_config.ai_enabled(g.org.id),
+                           compliance=services.map_finding(finding.rule_id, finding.category, finding.description,
+                                                           finding.references),
                            max_review=services.today() + timedelta(days=current_app.config["ACCEPTED_RISK_MAX_DAYS"]))
 
 

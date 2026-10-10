@@ -3,7 +3,14 @@
     eval-audit ./my-repo --format md --output report.md --fail-on high
     eval-audit ./my-repo --ai local --ai-model qwen2.5-coder:7b     # AI explanations from a model on this machine
     eval-audit ./my-repo --ai local --offline                       # nothing leaves the machine
+    eval-audit ./my-repo --fail-on policy                           # gate with the repository's .eval.toml
+    eval-audit ./my-repo --changed main                             # only findings in files changed since main
     eval-audit doctor                                               # check tools and the local model server
+    eval-audit hook                                                 # Claude Code PostToolUse hook (stdin event)
+    eval-audit mcp --root .                                         # MCP server on stdio (Claude Code, Cursor)
+
+A ``.eval.toml`` policy at the audited root (or ``--policy FILE``) is applied: excluded paths, disabled rules and
+analyzers, severity overrides. ``--fail-on policy`` gates with its ``[gate]`` section.
 
 Exit codes: 0 = completed and below the --fail-on threshold, 1 = findings at/above the threshold,
 2 = usage or input error. ``doctor``: 0 = ready for --ai local, 1 = not ready.
@@ -32,6 +39,7 @@ from .ai.local import (
 from .findings import SEVERITY_RANK
 from .netguard import block_outbound
 from .pipeline import PipelineConfig, run_pipeline
+from .policy import POLICY_FILE, PolicyError, evaluate_gate, layered
 from .reports import FORMATS, render
 from .workspace import WorkspaceError, extract_zip
 
@@ -50,8 +58,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("path", help="directory or .zip archive to audit (never executed)")
     p.add_argument("--format", choices=FORMATS, default="md")
     p.add_argument("--output", "-o", help="write the report here instead of stdout")
-    p.add_argument("--fail-on", choices=["critical", "high", "medium", "low", "never"], default="never",
-                   help="exit 1 if any scored finding at or above this severity exists")
+    p.add_argument("--fail-on", choices=["critical", "high", "medium", "low", "never", "policy"], default="never",
+                   help="exit 1 if any scored finding at or above this severity exists ('policy': use the "
+                        "policy's [gate])")
+    p.add_argument("--policy", help=f"policy file (default: {POLICY_FILE} at the audited root, if present)")
+    p.add_argument("--no-policy", action="store_true", help=f"ignore {POLICY_FILE}")
+    p.add_argument("--changed", nargs="?", const="HEAD", metavar="REF",
+                   help="report (and gate on) only findings in files changed since REF (default HEAD), incl. "
+                        "untracked files; the whole tree is still analyzed for context")
     p.add_argument("--analyzers", help="comma-separated analyzer names (default: all)")
     p.add_argument("--timeout", type=int, default=300, help="per-tool timeout in seconds")
     p.add_argument("--offline", action="store_true",
@@ -79,6 +93,20 @@ def build_doctor_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
+    if argv[:1] == ["hook"]:
+        from .agent import hook_main
+
+        hargs = argparse.ArgumentParser(prog="eval-audit hook",
+                                        description="Claude Code PostToolUse hook (reads the event on stdin)")
+        hargs.add_argument("--fail-on", choices=["critical", "high", "medium", "low"],
+                           help="report findings at or above this severity (default: $EVAL_HOOK_FAIL_ON or high)")
+        return hook_main(fail_on=hargs.parse_args(argv[1:]).fail_on)
+    if argv[:1] == ["mcp"]:
+        from .agent import mcp_main
+
+        margs = argparse.ArgumentParser(prog="eval-audit mcp", description="MCP server on stdio")
+        margs.add_argument("--root", default=".", help="directory the server may audit (default: current)")
+        return mcp_main(Path(margs.parse_args(argv[1:]).root))
     if argv[:1] == ["doctor"]:
         from .doctor import run_doctor
 
@@ -112,9 +140,11 @@ def main(argv: list[str] | None = None) -> int:
             elif not target.is_dir():
                 print(f"error: {target} is not a directory or .zip file", file=sys.stderr)
                 return 2
+            policy = _load_policy(args, root)
             result = run_pipeline(root, PipelineConfig(analyzers=analyzers, tool_timeout=args.timeout,
-                                                       progress=progress, ai=enricher, offline=args.offline))
-    except (WorkspaceError, ValueError) as exc:
+                                                       progress=progress, ai=enricher, offline=args.offline,
+                                                       policy=policy))
+    except (WorkspaceError, ValueError) as exc:  # PolicyError is a ValueError
         print(f"error: {exc}", file=sys.stderr)
         return 2
     if enricher is not None and result.ai_summary.get("error"):
@@ -125,6 +155,16 @@ def main(argv: list[str] | None = None) -> int:
     if blocked:
         print(f"warning: offline mode blocked {len(blocked)} outbound connection attempt(s): "
               f"{', '.join(dict.fromkeys(blocked))}", file=sys.stderr)
+
+    if args.changed:
+        from .agent import changed_files
+
+        try:
+            changed = set(changed_files(target if target.is_dir() else target.parent, args.changed))
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        result.findings = [f for f in result.findings if f.file_path in changed]
 
     model = result.to_dict()
     name = target.resolve().name  # `target.name` is empty for "." or ".."
@@ -137,11 +177,27 @@ def main(argv: list[str] | None = None) -> int:
     else:
         sys.stdout.write(report)
 
+    if args.fail_on == "policy":
+        gate = evaluate_gate(policy, [f for f in result.findings if f.scored], [o.to_dict() for o in result.outcomes])
+        for reason in gate.reasons:
+            print(f"gate: {reason}", file=sys.stderr)
+        return 0 if gate.passed else 1
     if args.fail_on != "never":
         threshold = SEVERITY_RANK[args.fail_on]
         if any(f.scored and SEVERITY_RANK[f.severity] >= threshold for f in result.findings):
             return 1
     return 0
+
+
+def _load_policy(args, root: Path):
+    if args.no_policy:
+        return layered([])
+    path = Path(args.policy) if args.policy else root / POLICY_FILE
+    if args.policy and not path.is_file():
+        raise PolicyError(f"policy file {path} not found")
+    if not path.is_file() or path.is_symlink():
+        return layered([])
+    return layered([("repository file" if not args.policy else str(path), path.read_text(encoding="utf-8"))])
 
 
 if __name__ == "__main__":  # pragma: no cover

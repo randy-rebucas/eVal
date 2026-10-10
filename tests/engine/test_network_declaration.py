@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[2]
 # because their network use happens inside the external program.
 NETWORK_CODE = re.compile(r"^\s*(?:import|from)\s+(?:requests|urllib\.request|http\.client|httpx|socket|aiohttp)\b",
                           re.M)
-INTERNET_ANALYZERS = {"osv", "semgrep", "trivy"}
+INTERNET_ANALYZERS = {"osv", "registry", "semgrep", "trivy"}
 
 
 def test_declared_internet_analyzers():

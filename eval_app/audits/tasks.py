@@ -42,10 +42,12 @@ class _Cancelled(Exception):
 @shared_task(name="eval.run_audit", bind=True, max_retries=0)
 def run_audit(self, audit_id: str) -> str:
     from eval_engine.pipeline import PipelineConfig, run_pipeline
-    from eval_engine.workspace import Limits, WorkspaceError, remove_tree
+    from eval_engine.policy import PolicyError
+    from eval_engine.workspace import WorkspaceError, remove_tree
 
+    from ..policies import effective_policy
     from .persist import load_previous_fingerprints, persist_result
-    from .workspaces import prepare_workspace
+    from .workspaces import limits_from_config, prepare_workspace
 
     audit = db.session.get(Audit, uuid.UUID(audit_id))
     if audit is not None and audit.status == "running":
@@ -65,16 +67,16 @@ def run_audit(self, audit_id: str) -> str:
     db.session.commit()
 
     cfg = current_app.config
-    limits = Limits(
-        max_files=cfg["WORKSPACE_MAX_FILES"],
-        max_total_bytes=cfg["WORKSPACE_MAX_TOTAL_MB"] * 1024 * 1024,
-        max_file_bytes=cfg["WORKSPACE_MAX_FILE_MB"] * 1024 * 1024,
-    )
+    limits = limits_from_config()
     workdir = Path(cfg.get("WORK_DIR") or cfg["DATA_DIR"] / "work") / audit_id
     progress = _Progress(audit)
     try:
         progress("fetching source", 2)
         root = prepare_workspace(audit, workdir, limits)
+        policy, notes = effective_policy(audit, root)
+        audit.policy = policy.to_dict()
+        if notes:
+            audit.stats = {**(audit.stats or {}), "policy_notes": notes}
         ai = _ai_enricher(audit)
         result = run_pipeline(
             root,
@@ -84,17 +86,20 @@ def run_audit(self, audit_id: str) -> str:
                 progress=progress,
                 previous_fingerprints=load_previous_fingerprints(audit),
                 ai=ai,
+                policy=policy,
             ),
         )
         progress("saving results", 97)
         persist_result(audit, result)
+        if audit.pr_number:
+            _assess_change(audit)
         audit.status = "succeeded"
         audit.stage = "complete"
         audit.progress = 100
     except _Cancelled:
         db.session.rollback()
         return "cancelled"
-    except WorkspaceError as exc:
+    except (WorkspaceError, PolicyError) as exc:
         db.session.rollback()
         _fail(audit, str(exc))
     except SoftTimeLimitExceeded:
@@ -108,7 +113,33 @@ def run_audit(self, audit_id: str) -> str:
         remove_tree(workdir)
     audit.finished_at = utcnow()
     db.session.commit()
+    _report(audit)
     return audit.status
+
+
+def _assess_change(audit: Audit) -> None:
+    """Change risk of the pull request (eval_engine.change_risk); stored with the audit's stats."""
+    from eval_engine.change_risk import assess
+
+    from ..findings.services import pr_introduced
+
+    files = (audit.stats or {}).get("pr_files") or [[p, 0, 0] for p in audit.changed_files or []]
+    risk = assess([(p, int(a), int(d)) for p, a, d in files], pr_introduced(audit))
+    audit.stats = {**(audit.stats or {}), "change_risk": risk.to_dict()}
+
+
+def _report(audit: Audit) -> None:
+    """Publish the result where it was requested from (a GitHub check run); never fails the audit."""
+    from .. import notifications
+    from ..integrations import checks
+
+    db.session.refresh(audit)  # the webhook may have attached a check run while the audit ran
+    for report in (checks.complete, notifications.after_audit):
+        try:
+            report(audit)
+        except Exception:  # noqa: BLE001 - reporting is best-effort
+            db.session.rollback()
+            current_app.logger.exception("reporting audit %s failed (%s)", audit.id, report.__module__)
 
 
 def _fail(audit: Audit, message: str) -> None:

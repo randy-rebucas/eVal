@@ -15,6 +15,12 @@
     <div class="pane-bar"><h2 id="browse-h"><span><i class="bi bi-github" aria-hidden="true"></i> Browse GitHub repositories</span></h2>
       {% if gh_repos is not none %}<span class="pane-aside">{{ gh_repos|length }} found</span>{% endif %}</div>
     <div class="pane-body">
+      {% if can_connect %}
+      <div class="form-acts mb-3">
+        <a class="btn-ink" href="{{ url_for('integrations.github_connect', org_slug=g.org.slug, project_id=project.id, csrf=csrf_token()) }}"><i class="bi bi-github" aria-hidden="true"></i> {{ 'Connect another GitHub account' if credential_choices|length > 1 else 'Connect GitHub' }}</a>
+        <span class="reg-quiet">{% if gh_oauth %}Sign in on GitHub and approve access; your repositories load here.{% else %}GitHub sign-in needs <code>GITHUB_OAUTH_CLIENT_ID</code> and <code>GITHUB_OAUTH_CLIENT_SECRET</code> configured.{% endif %}</span>
+      </div>
+      {% endif %}
       <form method="get" class="form-inline">
         <input type="hidden" name="browse" value="1">
         <div><label class="form-label" for="browse-cred">Credential</label>
@@ -56,23 +62,20 @@
         <p class="empty mt-3 mb-0">No repositories found for that credential or owner.</p>
         {% endif %}
       {% endif %}
-      {% if credential_choices|length == 1 %}<p class="pane-note">To list private repositories, {% if g.membership.role in ['admin', 'owner'] %}add a GitHub token under <a href="{{ url_for('integrations.index', org_slug=g.org.slug) }}">Integrations</a>{% else %}ask an admin to browse with an organization credential{% endif %}.</p>{% endif %}
-    </div>
-  </section>
-
-  <div class="split split-even">
-    <section class="pane" aria-labelledby="gh-h">
-      <div class="pane-bar"><h2 id="gh-h"><span><i class="bi bi-github" aria-hidden="true"></i> Connect by name</span></h2></div>
-      <div class="pane-body">
-        <form method="post" novalidate class="form-grid">
+      {% if credential_choices|length == 1 and not can_connect %}<p class="pane-note">To list private repositories, ask an admin to connect GitHub.</p>{% endif %}
+      <details class="mt-3">
+        <summary class="reg-quiet">Or enter a repository name</summary>
+        <form method="post" novalidate class="form-grid mt-2">
           {{ gh_form.hidden_tag() }}<input type="hidden" name="kind" value="github">
           {{ field(gh_form.full_name) }}
           {{ field(gh_form.credential_id) }}
-          <p class="pane-note mt-0">Private repositories need a token. Add one under <a href="{{ url_for('integrations.index', org_slug=g.org.slug) }}">Integrations</a>.</p>
           <div class="form-acts"><button class="btn-ink"><i class="bi bi-link-45deg" aria-hidden="true"></i> Connect</button></div>
         </form>
-      </div>
-    </section>
+      </details>
+    </div>
+  </section>
+
+  <div>
     <section class="pane" aria-labelledby="zip-h">
       <div class="pane-bar"><h2 id="zip-h"><span><i class="bi bi-file-zip" aria-hidden="true"></i> Upload a ZIP archive</span></h2></div>
       <div class="pane-body">
