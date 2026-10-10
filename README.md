@@ -7,6 +7,11 @@ upload a ZIP, run an asynchronous audit, and get evidence-backed findings across
 testing, databases, APIs, dependencies, performance, DevOps and maintainability — with transparent scores,
 audit history, PR-level gating, GitHub issues and optional AI-assisted explanations.
 
+AI can generate software; eVal verifies that the software is actually engineered correctly. Beyond classic
+vulnerabilities, it looks for the engineering gaps generated code tends to leave: authorization flaws, poor error
+handling, weak database design, scalability traps, missing observability and undocumented assumptions (see the
+concern-to-check map in [PRODUCT.md](PRODUCT.md#vision)).
+
 eVal never executes the code it audits, and it never claims an application is secure: scores are risk
 indicators, and categories it could not assess are shown as *not assessed*.
 
@@ -31,12 +36,15 @@ indicators, and categories it could not assess are shown as *not assessed*.
 - Users, organizations, roles (viewer/member/admin/owner), projects, tenant isolation on every query
 - GitHub repositories (public, or private via encrypted tokens) with branch/commit selection; ZIP uploads
 - Asynchronous audits on Celery + Redis with live progress and cancellation
-- 20 analyzers: Ruff, Bandit, mypy, ESLint, TypeScript, Semgrep, Trivy, OSV.dev, PyPI/npm registry checks, and
-  built-in checks for secrets, API security, database access, DevOps/CI, testing, dependencies, maintainability,
-  architecture (import cycles), performance (static estimates), **taint analysis** (request data reaching SQL,
-  shell, eval, file paths, outbound URLs, templates, redirects) and **AI-generated-code patterns** (hallucinated or
-  lookalike packages, undeclared imports, stubs, placeholders, tests that cannot fail). Missing tools are reported,
-  never silently skipped.
+- 21 analyzers: Ruff, Bandit, mypy, ESLint, TypeScript, Semgrep, Trivy, OSV.dev, PyPI/npm registry checks, and
+  built-in checks for secrets, API security (including object-level authorization/IDOR and error disclosure),
+  database access and schema design, DevOps/CI and observability (metrics, tracing, request ids, logging),
+  testing, dependencies, maintainability (including swallowed errors), architecture (import cycles), performance
+  and scalability (static estimates), **configuration assumptions** (undocumented environment variables,
+  hardcoded local endpoints and paths, APIs without an OpenAPI contract), **taint analysis** (request data
+  reaching SQL, shell, eval, file paths, outbound URLs, templates, redirects) and **AI-generated-code patterns**
+  (hallucinated or lookalike packages, undeclared imports, stubs, placeholders, tests that cannot fail). Missing
+  tools are reported, never silently skipped.
 - Findings with evidence, location, severity, confidence, type (confirmed / potential / estimate / AI), and
   remediation; cross-tool deduplication and stable fingerprints; import **reachability** for vulnerable
   dependencies (imported / declared but unused / transitive)

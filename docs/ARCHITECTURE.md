@@ -56,7 +56,8 @@ eval_engine/
     registry.py      Registration and selection by language / availability
     ruff.py, bandit.py, mypy_.py, eslint.py, tsc.py, semgrep.py, trivy.py   (external tools)
     secrets.py, devops.py, testing.py, database.py, api_security.py,
-    dependencies.py, maintainability.py, architecture.py, performance.py    (built-in)
+    dependencies.py, maintainability.py, architecture.py, performance.py,
+    configuration.py, taint.py, ai_code.py                                  (built-in)
   ai/
     base.py          AIProvider protocol, AIRequest/AIResponse
     anthropic_provider.py, openai_provider.py   official SDKs; OpenAI-compatible local endpoints via base_url
