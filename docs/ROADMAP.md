@@ -11,6 +11,7 @@
 | 5 | AI provider abstraction (Anthropic, OpenAI, OpenAI-compatible/local), versioned prompts, injection-hardened enricher, per-org AI settings |
 | 6 (partial) | JSON API + tokens, pull-request audits with base-branch baselines, opt-in PR comments, CI gate script and GitHub Actions example |
 | 8 | Verified AI fix pull requests (re-audit of the patched tree), GitHub App (webhook PR/push audits, check runs with annotations, installation tokens), policies as code (org ← repo ← `.eval.toml`, per-path gates, required analyzers), AI-generated-code analyzer (undeclared/lookalike/non-existent packages, stubs, placeholders, hollow tests), PR change-risk score, Claude Code hook + MCP server + `--changed`, compliance mapping (CWE/OWASP/ASVS/SOC 2/ISO 27001) and evidence packs, scheduled re-audits with Slack/Teams/webhook regression alerts, TOTP MFA, OIDC SSO, SCIM, audit log UI, dependency reachability, intra-procedural taint analysis |
+| 9 | Engineering-quality coverage for the product vision ([PRODUCT.md](../PRODUCT.md#vision)): object-level authorization (IDOR) heuristics for Python and Express; error handling (broad `except`/empty `catch`, exception text and stack traces in responses, missing global error handler); schema design (missing primary keys, money as floats, natural keys without unique constraints; SQLAlchemy, Django, Prisma); scalability (process-local state, in-memory session stores, local-disk uploads, unbounded JS queries); observability (metrics, tracing/error tracking, request ids, print/console logging); new `configuration` analyzer for undocumented assumptions (env vars missing from .env.example/docs, hardcoded local endpoints, machine-specific paths, APIs without an OpenAPI contract) |
 | 7 (partial) | eVal Local ([LOCAL_AI.md](LOCAL_AI.md)): `eval-audit --ai local` (loopback-only model server, proxies ignored), `--offline` with network guard, small-model batching and output retry, AI-assisted triage ordering in reports, `eval-audit doctor`. Open: real-model benchmarks, `eval-audit serve` |
 
 Test suite: ~430 tests (unit + integration), run on SQLite and PostgreSQL.
@@ -38,6 +39,9 @@ Test suite: ~430 tests (unit + integration), run on SQLite and PostgreSQL.
 - Inter-procedural and cross-module taint tracking (today: within one function); JavaScript/TypeScript taint.
 - Call-graph reachability for dependency vulnerabilities (today: import level).
 - Calibrating scoring weights and the change-risk factors against a labelled corpus of repositories.
+- IDOR detection is per-handler and heuristic: ownership checks in helpers, services or middleware are not
+  followed (findings are low-confidence *potential*). Error-handling, observability and configuration checks are
+  Python and JavaScript/TypeScript only.
 
 ## Next steps (suggested order)
 

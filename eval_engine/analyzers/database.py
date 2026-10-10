@@ -1,4 +1,5 @@
-"""Database design and data-access safety: string-built SQL, migrations, unindexed foreign keys."""
+"""Database design and data-access safety: string-built SQL, migrations, unindexed foreign keys, missing primary
+keys, money stored as floating point, and natural keys without uniqueness constraints."""
 
 from __future__ import annotations
 
@@ -16,6 +17,25 @@ JS_SQL_TEMPLATE = re.compile(
     r"""delete)\b[^`]*\$\{""", re.I)
 JS_SQL_CONCAT = re.compile(
     r"""\.(?:query|execute|raw)\s*\(\s*["'][^"']*\b(select|insert|update|delete)\b[^"']*["']\s*\+""", re.I)
+MODEL_BASE = re.compile(r"(db\.)?Model|Base|\w*Base")
+MONEY_TOKENS = {"price", "prices", "amount", "cost", "costs", "total", "subtotal", "balance", "fee", "fees", "salary",
+                "wage", "payment", "revenue", "tax", "discount", "charge", "refund", "budget", "money", "usd", "eur"}
+NOT_MONEY_TOKENS = {"rate", "ratio", "percent", "percentage", "pct", "count", "weight", "score", "factor"}
+NATURAL_KEY = re.compile(r"(?i)email|e_mail|username|user_name|login|slug|sku|handle")
+PERSON_MODEL = re.compile(r"(?i)\w*(user|account|member|customer|person|profile|admin|staff|employee|subscriber)s?$")
+
+
+def is_money_name(name: str) -> bool:
+    tokens = {t.lower() for t in re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])", name)}
+    return bool(tokens & MONEY_TOKENS) and not tokens & NOT_MONEY_TOKENS
+
+
+def _call_attr(node: ast.Call) -> str:
+    return node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
+
+
+def _kw_true(node: ast.Call, name: str) -> bool:
+    return any(k.arg == name and isinstance(k.value, ast.Constant) and k.value.value is True for k in node.keywords)
 
 
 def _is_dynamic_sql(node: ast.AST) -> str | None:
@@ -63,6 +83,9 @@ class DatabaseAnalyzer(Analyzer):
             if re.search(r"\b(db\.Model|DeclarativeBase|declarative_base\(\))", text):
                 uses_sqlalchemy_models = True
                 findings.extend(self._unindexed_fks(ctx, rel, tree))
+            if re.search(r"\b(db\.Model|DeclarativeBase|declarative_base\(\)|models\.Model)\b", text) and not \
+                    is_test_path(rel):
+                findings.extend(self._schema_design(ctx, rel, tree))
             for node in ast.walk(tree):
                 if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute | ast.Name)):
                     continue
@@ -78,8 +101,143 @@ class DatabaseAnalyzer(Analyzer):
                 if JS_SQL_TEMPLATE.search(line) or JS_SQL_CONCAT.search(line):
                     findings.append(self._sqli(ctx, rel, i, "template literal / concatenation", is_test_path(rel)))
 
+        for rel in ctx.files_with_suffix(".prisma"):
+            findings.extend(self._prisma_design(ctx, rel))
         findings.extend(self._migrations(ctx, uses_sqlalchemy_models))
         return findings
+
+    # ------------------------------------------------------------------------------------- schema design
+    def _schema_design(self, ctx, rel, tree):
+        """Model-level design problems: tables without a primary key, money stored as binary floating point, and
+        natural keys (email, username, slug) without a uniqueness guarantee."""
+        out = []
+        for cls in [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]:
+            bases = [ast.unparse(b) for b in cls.bases]
+            django = any(b in ("models.Model", "Model") for b in bases) and "models.Model" in (ctx.read(rel) or "")
+            sqlalchemy = any(MODEL_BASE.fullmatch(b) for b in bases) and not django
+            # Mixins and parent models can contribute columns (often the primary key) that are not visible here.
+            only_model_bases = all(MODEL_BASE.fullmatch(b) for b in bases)
+            if not (django or sqlalchemy):
+                continue
+            class_names = {t.id for s in cls.body if isinstance(s, ast.Assign) for t in s.targets
+                           if isinstance(t, ast.Name)}
+            if class_names & {"__abstract__", "__table__"} or any(
+                    isinstance(s, ast.ClassDef) and s.name == "Meta" and "abstract" in ast.unparse(s)
+                    for s in cls.body):
+                continue
+            unique_cols = self._table_args_unique_columns(cls)
+            columns = []
+            for stmt in cls.body:
+                if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+                    name, value, annotation = stmt.target.id, stmt.value, ast.unparse(stmt.annotation)
+                elif isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
+                    name, value, annotation = stmt.targets[0].id, stmt.value, ""
+                else:
+                    continue
+                if isinstance(value, ast.Call):
+                    columns.append((name, value, stmt.lineno, annotation))
+            sa_columns = [c for _, c, _, _ in columns if _call_attr(c) in ("Column", "mapped_column")]
+            if sqlalchemy and only_model_bases and sa_columns and not any(_kw_true(c, "primary_key")
+                                                                          for c in sa_columns):
+                out.append(self._design(ctx, "database.no-primary-key", f"Model {cls.name} has no primary key",
+                                        Severity.MEDIUM, Confidence.MEDIUM, FindingKind.CONFIRMED,
+                                        "No column is marked primary_key=True. SQLAlchemy cannot map a table without "
+                                        "a primary key, and rows cannot be updated or deleted reliably.",
+                                        "Add a surrogate primary key (e.g. `id = mapped_column(Integer, "
+                                        "primary_key=True)`) or a composite key.", rel, cls.lineno))
+            for name, call, line, annotation in columns:
+                kind = _call_attr(call)
+                if kind in ("Column", "mapped_column"):
+                    type_src = " ".join(ast.unparse(a) for a in call.args[:2]) + " " + annotation
+                else:
+                    type_src = kind
+                if is_money_name(name) and re.search(r"\b(Float|REAL|Double|DOUBLE_PRECISION|FloatField|float)\b",
+                                                     type_src):
+                    out.append(self._design(ctx, "database.money-as-float", f"Monetary column `{name}` stored as "
+                                            "floating point", Severity.MEDIUM, Confidence.MEDIUM,
+                                            FindingKind.CONFIRMED,
+                                            "Binary floating point cannot represent most decimal amounts exactly "
+                                            "(0.1 + 0.2 != 0.3), so totals, taxes and balances drift and fail "
+                                            "reconciliation.",
+                                            "Use a fixed-point type (Numeric/DECIMAL with explicit precision and "
+                                            "scale, Django DecimalField) or store integer minor units (cents).",
+                                            rel, line, ["https://cwe.mitre.org/data/definitions/1339.html"]))
+                natural = NATURAL_KEY.fullmatch(name)
+                if natural and (name.lower() != "email" or PERSON_MODEL.search(cls.name)) \
+                        and kind in ("Column", "mapped_column", "CharField", "EmailField", "SlugField") \
+                        and not _kw_true(call, "unique") and not _kw_true(call, "primary_key") \
+                        and name not in unique_cols and not self._unique_together(cls, name):
+                    out.append(self._design(ctx, "database.missing-unique-constraint", f"`{cls.name}.{name}` has no "
+                                            "unique constraint", Severity.LOW, Confidence.LOW, FindingKind.POTENTIAL,
+                                            f"`{name}` looks like a natural key, but the database does not enforce "
+                                            "uniqueness. Application-level 'check then insert' races under "
+                                            "concurrency and produces duplicate accounts or records.",
+                                            "Add `unique=True` (or a unique index/constraint, case-insensitive for "
+                                            "emails) and handle the integrity error.", rel, line))
+        return out
+
+    @staticmethod
+    def _table_args_unique_columns(cls: ast.ClassDef) -> set[str]:
+        """Columns covered by a UniqueConstraint or unique Index in ``__table_args__`` (composite ones included:
+        a slug unique per organization is a deliberate design)."""
+        cols: set[str] = set()
+        for stmt in cls.body:
+            if isinstance(stmt, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "__table_args__"
+                                                    for t in stmt.targets):
+                for node in ast.walk(stmt.value):
+                    if isinstance(node, ast.Call) and (_call_attr(node) == "UniqueConstraint" or (
+                            _call_attr(node) == "Index" and _kw_true(node, "unique"))):
+                        cols.update(a.value for a in node.args if isinstance(a, ast.Constant)
+                                    and isinstance(a.value, str))
+        return cols
+
+    @staticmethod
+    def _unique_together(cls: ast.ClassDef, column: str) -> bool:
+        for stmt in cls.body:
+            if isinstance(stmt, ast.ClassDef) and stmt.name == "Meta":
+                src = ast.unparse(stmt)
+                if ("unique_together" in src or "UniqueConstraint" in src) and f"'{column}'" in src:
+                    return True
+        return False
+
+    def _prisma_design(self, ctx, rel):
+        out = []
+        model, block_attrs = None, ""
+        lines = ctx.lines(rel)
+        for i, raw in enumerate(lines, start=1):
+            line = raw.split("//", 1)[0].strip()
+            m = re.match(r"model\s+(\w+)\s*\{", line)
+            if m:
+                model = m.group(1)
+                end = next((j for j in range(i, len(lines)) if lines[j].strip() == "}"), len(lines))
+                block_attrs = "\n".join(ln for ln in lines[i:end] if ln.strip().startswith("@@"))
+                continue
+            if line == "}":
+                model = None
+                continue
+            field = re.match(r"(\w+)\s+(\w+)(\??)\s*(.*)$", line)
+            if not model or not field or line.startswith("@@"):
+                continue
+            name, ftype, attrs = field.group(1), field.group(2), field.group(4)
+            if is_money_name(name) and ftype == "Float":
+                out.append(self._design(ctx, "database.money-as-float", f"Monetary field `{model}.{name}` stored as "
+                                        "Float", Severity.MEDIUM, Confidence.MEDIUM, FindingKind.CONFIRMED,
+                                        "Prisma's Float is binary floating point; decimal amounts drift and fail "
+                                        "reconciliation.", "Use `Decimal` (with @db.Decimal(p, s)) or integer cents.",
+                                        rel, i, ["https://cwe.mitre.org/data/definitions/1339.html"]))
+            if NATURAL_KEY.fullmatch(name) and ftype == "String" and "@unique" not in attrs and "@id" not in attrs \
+                    and (name.lower() != "email" or PERSON_MODEL.search(model)) \
+                    and not re.search(rf"@@(unique|id)\(\[\s*{name}\s*\]", block_attrs):
+                out.append(self._design(ctx, "database.missing-unique-constraint", f"`{model}.{name}` has no unique "
+                                        "constraint", Severity.LOW, Confidence.LOW, FindingKind.POTENTIAL,
+                                        f"`{name}` looks like a natural key but is not @unique; concurrent writes can "
+                                        "create duplicates.", "Add `@unique` and handle the constraint error.",
+                                        rel, i))
+        return out
+
+    def _design(self, ctx, rule, title, sev, conf, kind, desc, fix, rel, line, refs=None):
+        return self.finding(ctx, rule=rule, title=title, category=Category.DATABASE, severity=sev, confidence=conf,
+                            kind=kind, description=desc, remediation=fix, file_path=rel, line=line, references=refs)
 
     def _sqli(self, ctx, rel, line, how, in_tests):
         return self.finding(

@@ -1,5 +1,6 @@
-"""API and web-application security: authorization coverage, debug mode, CORS, JWT and TLS verification,
-mass assignment, CSRF, and hardening middleware."""
+"""API and web-application security: authentication coverage, object-level authorization (IDOR), error
+disclosure and error handling, debug mode, CORS, JWT and TLS verification, mass assignment, CSRF, and hardening
+middleware."""
 
 from __future__ import annotations
 
@@ -19,6 +20,31 @@ PUBLIC_NAMES = re.compile(r"(?i)(login|logout|register|signup|sign_up|health|rea
 JS_ROUTE = re.compile(r"""\b(?:app|router|server)\.(post|put|patch|delete)\(\s*["'`]([^"'`]+)["'`]\s*,\s*(.*)$""")
 REQUEST_BODY = re.compile(r"request\.(json|form|args|values|get_json\(\))|await request\.json")
 JS_AUTH_HINT = re.compile(r"(?i)(auth|jwt|passport|session|requireUser|isAuthenticated|protect|guard|verify)")
+JS_ANY_ROUTE = re.compile(r"""\b(?:app|router|server)\.(get|post|put|patch|delete|all)\(\s*["'`]([^"'`]+)["'`]"""
+                          r"""\s*,(.*)$""")
+JS_GLOBAL_AUTH = re.compile(r"(?i)\.use\([^)]*(auth|jwt|passport|requireUser|isAuthenticated|protect|guard)")
+JS_ERROR_MIDDLEWARE = re.compile(r"\(\s*(?:err|error|e)\s*(?::\s*\w+)?\s*,\s*req\w*\s*(?::\s*\w+)?\s*,\s*res\w*\s*"
+                                 r"(?::\s*\w+)?\s*,\s*next\w*|setErrorHandler\(")
+JS_ERROR_LEAK = re.compile(r"\bres\.(?:status\(\s*\d+\s*\)\.)?(?:send|json|end|write)\([^;]*"
+                           r"\b(?:err|error|e|ex)\.stack\b")
+# Object lookups by a value taken from the URL: the classic insecure direct object reference (IDOR) shape.
+OBJECT_LOOKUPS = {"get", "get_or_404", "first_or_404", "filter_by", "filter", "get_object_or_404", "find_one",
+                  "find_by_id", "one_or_none", "scalar_one_or_none", "scalar_one", "where", "delete", "update"}
+JS_LOOKUP_BY_PARAM = re.compile(r"\.(?:findById|findByPk|findOne|findUnique|findFirst|findOneBy|getById|"
+                                r"findByIdAndUpdate|findByIdAndDelete|deleteOne|updateOne|update|delete|destroy)"
+                                r"\([^;]*req\.params")
+# Evidence that a handler scopes the object to the caller (ownership, tenant, or an explicit permission check).
+OWNERSHIP = re.compile(r"(?i)(current_user|g\.user|request\.user|request\.state\.user|owner|org_id|organization|"
+                       r"tenant|account_id|created_by|author_id|abort\(\s*40[34]|forbidden|permissiondenied|has_perm|"
+                       r"permission|can_\w+\(|authoriz|check_access|policy|membership|scope)")
+JS_OWNERSHIP = re.compile(r"(?i)(req\.user|req\.auth|res\.locals\.(user|session)|owner|tenant|orgId|organizationId|"
+                          r"\b403\b|forbidden|authoriz|permission|can\(|ability|policy)")
+OBJECT_AUTHZ_DECORATOR = re.compile(r"(?i)(permission|owner|role|admin|policy|authoriz|access|scope|org_required|"
+                                    r"tenant|member)")
+PATH_PARAM = re.compile(r"<(?:[^:<>]+:)?(\w+)>|\{(\w+)(?::[^}]*)?\}|:(\w+)")
+RESPONSE_CALLS = {"jsonify", "JSONResponse", "make_response", "Response", "HTTPException", "abort", "HttpResponse",
+                  "JsonResponse", "PlainTextResponse", "HTMLResponse"}
+BROAD_CATCH = {"", "Exception", "BaseException"}
 
 
 def _decorator_name(dec: ast.AST) -> str:
@@ -76,7 +102,8 @@ class APISecurityAnalyzer(Analyzer):
     def run(self, ctx: AnalyzerContext):
         findings: list = []
         unprotected: list[tuple[str, int, str, str]] = []
-        auth_seen = False
+        auth_seen = error_handler_seen = False
+        route_count = 0
         for rel in ctx.python_files():
             if is_test_path(rel):
                 continue
@@ -90,19 +117,27 @@ class APISecurityAnalyzer(Analyzer):
             file_guard = bool(re.search(r"\.before_request\b", text)) and bool(
                 re.search(r"(?i)(current_user|abort\(\s*40[13]|login|auth|token)", text))
             findings.extend(self._python_file(ctx, rel, tree, text))
-            if file_guard:
-                continue
+            if re.search(r"\.(errorhandler|register_error_handler|exception_handler|add_exception_handler)\b", text):
+                error_handler_seen = True
             for node in ast.walk(tree):
                 if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                     continue
+                if any("errorhandler" in _decorator_name(d) or "exception_handler" in _decorator_name(d)
+                       for d in node.decorator_list):
+                    findings.extend(self._error_details(ctx, rel, node))
                 routes = [(d, _route_info(d)) for d in node.decorator_list]
                 routes = [(d, r) for d, r in routes if r]
                 if not routes:
                     continue
+                route_count += 1
+                findings.extend(self._error_details(ctx, rel, node))
                 path, methods = routes[0][1]
                 others = [_decorator_name(d) for d in node.decorator_list if d is not routes[0][0]]
-                protected = any(AUTH_DECORATOR.search(n) for n in others) or _fastapi_protected(node, routes[0][0])
-                if not protected and methods & MUTATING and not PUBLIC_NAMES.search(node.name + path):
+                protected = file_guard or any(AUTH_DECORATOR.search(n) for n in others) or _fastapi_protected(
+                    node, routes[0][0])
+                if protected:
+                    findings.extend(self._python_idor(ctx, rel, node, path, others))
+                elif methods & MUTATING and not PUBLIC_NAMES.search(node.name + path):
                     unprotected.append((rel, node.lineno, f"{'/'.join(sorted(methods & MUTATING))} {path}",
                                         node.name))
 
@@ -113,13 +148,19 @@ class APISecurityAnalyzer(Analyzer):
             if JS_AUTH_HINT.search(text) and re.search(r"(?i)(passport|jsonwebtoken|express-session|jwt)", text):
                 auth_seen = True
             findings.extend(self._js_file(ctx, rel, text))
+            findings.extend(self._js_idor(ctx, rel))
+            if JS_ERROR_MIDDLEWARE.search(text):
+                error_handler_seen = True
             for i, line in enumerate(ctx.lines(rel), start=1):
+                if JS_ANY_ROUTE.search(line):
+                    route_count += 1
                 m = JS_ROUTE.search(line)
                 if m and not JS_AUTH_HINT.search(m.group(3)) and not PUBLIC_NAMES.search(m.group(2)):
                     unprotected.append((rel, i, f"{m.group(1).upper()} {m.group(2)}", m.group(2)))
 
         findings.extend(self._unprotected(ctx, unprotected, auth_seen))
         findings.extend(self._project_level(ctx))
+        findings.extend(self._no_error_handler(ctx, route_count, error_handler_seen))
         return findings
 
     # ------------------------------------------------------------------------------------------- python
@@ -211,10 +252,140 @@ class APISecurityAnalyzer(Analyzer):
                                "checks).", rel, None))
         return out
 
+    def _python_idor(self, ctx, rel, func, path, decorators):
+        """An authenticated handler that loads a record by a URL parameter without any visible ownership check."""
+        params = {g for m in PATH_PARAM.finditer(path) for g in m.groups() if g}
+        if not params or any(OBJECT_AUTHZ_DECORATOR.search(d) for d in decorators):
+            return []
+        # Names bound to the authenticated principal by dependency injection, e.g. ``user = Depends(current_user)``.
+        principals = set()
+        positional = func.args.args[len(func.args.args) - len(func.args.defaults):]
+        for arg, default in [*zip(positional, func.args.defaults, strict=False),
+                             *zip(func.args.kwonlyargs, func.args.kw_defaults, strict=False)]:
+            if isinstance(default, ast.Call) and _decorator_name(default).endswith(("Depends", "Security")):
+                principals.add(arg.arg)
+        body = "\n".join(ast.unparse(s) for s in func.body)
+        for name in params:
+            body = re.sub(rf"\b{re.escape(name)}\b", "_", body)
+        if OWNERSHIP.search(body) or any(re.search(rf"\b{re.escape(p)}\b", body) for p in principals):
+            return []
+        for node in ast.walk(func):
+            if not isinstance(node, ast.Call):
+                continue
+            name = _decorator_name(node)
+            if name.split(".")[-1] not in OBJECT_LOOKUPS or name.startswith(("request.", "os.", "self.request")):
+                continue
+            used = {n.id for a in [*node.args, *(k.value for k in node.keywords)] for n in ast.walk(a)
+                    if isinstance(n, ast.Name)}
+            hit = sorted(used & params)
+            if hit:
+                return [self._f(ctx, "api.idor-unscoped-lookup", f"Object loaded by URL parameter `{hit[0]}` "
+                                "without an ownership check", Severity.MEDIUM, Confidence.LOW, FindingKind.POTENTIAL,
+                                f"`{func.name}()` is authenticated, but it fetches a record using `{hit[0]}` from "
+                                "the URL and never compares it with the current user, organization, or a "
+                                "permission. Any signed-in user may read or change other users' records by "
+                                "changing the id (insecure direct object reference). The check may live in a "
+                                "helper eVal cannot see — verify.",
+                                "Scope the query to the caller (e.g. `filter_by(id=..., owner_id=current_user.id)`) "
+                                "or check ownership/permission after loading and return 404/403.",
+                                rel, node.lineno, Category.SECURITY)]
+        return []
+
+    def _error_details(self, ctx, rel, func):
+        """Exception text or tracebacks returned to the client from a handler."""
+        handlers: list[tuple[str | None, list[ast.stmt]]] = []
+        for dec in func.decorator_list:
+            dname = _decorator_name(dec)
+            if ("errorhandler" in dname or "exception_handler" in dname) and isinstance(dec, ast.Call) and dec.args \
+                    and ast.unparse(dec.args[0]) in ("Exception", "BaseException", "500") and func.args.args:
+                handlers.append((func.args.args[-1].arg, func.body))
+        for node in ast.walk(func):
+            if isinstance(node, ast.ExceptHandler) and (
+                    "" if node.type is None else ast.unparse(node.type)) in BROAD_CATCH:
+                handlers.append((node.name, node.body))
+        for exc_name, body in handlers:
+            for stmt in body:
+                for node in ast.walk(stmt):
+                    if isinstance(node, ast.Return) and node.value is not None:
+                        src = ast.unparse(node.value)
+                    elif isinstance(node, ast.Call) and _decorator_name(node).split(".")[-1] in RESPONSE_CALLS:
+                        src = ast.unparse(node)
+                    else:
+                        continue
+                    traceback_leak = "traceback.format_exc" in src or "format_exception" in src
+                    text_leak = bool(exc_name) and bool(re.search(
+                        rf"\b(str|repr)\(\s*{exc_name}\s*\)|\{{{exc_name}(!r|!s)?\}}|\b{exc_name}\.args\b", src))
+                    if traceback_leak or text_leak:
+                        return [self._f(ctx, "api.error-details-exposed",
+                                        "Stack trace returned to the client" if traceback_leak else
+                                        "Unexpected exception text returned to the client",
+                                        Severity.MEDIUM, Confidence.HIGH if traceback_leak else Confidence.MEDIUM,
+                                        FindingKind.CONFIRMED if traceback_leak else FindingKind.POTENTIAL,
+                                        "A handler for unexpected errors sends the exception message"
+                                        + (" and traceback" if traceback_leak else "") + " in the response. "
+                                        "Internal errors can reveal SQL, file paths, hostnames, library versions, "
+                                        "or secrets, and they help attackers probe the system.",
+                                        "Log the exception server-side with a correlation id and return a generic "
+                                        "message (and that id) to the client.", rel, node.lineno, Category.SECURITY)]
+        return []
+
+    def _js_idor(self, ctx, rel):
+        lines = ctx.lines(rel)
+        text = "\n".join(lines)
+        global_auth = bool(JS_GLOBAL_AUTH.search(text))
+        starts = [(i, m) for i, ln in enumerate(lines) if (m := JS_ANY_ROUTE.search(ln))]
+        out = []
+        for k, (start, m) in enumerate(starts):
+            if not (global_auth or JS_AUTH_HINT.search(m.group(3))):
+                continue  # unauthenticated routes are reported (when mutating) as route-without-auth instead
+            end = min(starts[k + 1][0] if k + 1 < len(starts) else len(lines), start + 60)
+            window = lines[start:end]
+            if JS_OWNERSHIP.search("\n".join(window)):
+                continue
+            hit = next((start + j for j, ln in enumerate(window) if JS_LOOKUP_BY_PARAM.search(ln)), None)
+            if hit is not None:
+                out.append(self._f(ctx, "api.idor-unscoped-lookup", f"Object loaded by URL parameter without an "
+                                   f"ownership check: {m.group(1).upper()} {m.group(2)}", Severity.MEDIUM,
+                                   Confidence.LOW, FindingKind.POTENTIAL,
+                                   "This authenticated route fetches or changes a record by `req.params` and never "
+                                   "compares it with `req.user`, a tenant, or a permission. Any signed-in user may "
+                                   "access other users' records by changing the id (IDOR). Verify whether a "
+                                   "middleware enforces ownership.",
+                                   "Include the owner in the query (`where: { id, ownerId: req.user.id }`) or check "
+                                   "ownership after loading and return 404/403.", rel, hit + 1, Category.SECURITY))
+        return out
+
+    def _no_error_handler(self, ctx, route_count, error_handler_seen):
+        frameworks = set(ctx.languages.frameworks)
+        if error_handler_seen or route_count < 3:
+            return []
+        if "express" in frameworks:
+            return [self._f(ctx, "api.no-error-handler", "Express app without an error-handling middleware",
+                            Severity.LOW, Confidence.MEDIUM, FindingKind.POTENTIAL,
+                            "No `(err, req, res, next)` middleware was found. Express's default handler returns the "
+                            "stack trace unless NODE_ENV=production, and errors are not logged or shaped consistently.",
+                            "Register a final error-handling middleware that logs the error with a request id and "
+                            "returns a generic JSON error.", "", None)]
+        if "flask" in frameworks:
+            return [self._f(ctx, "api.no-error-handler", "Flask app without an application-wide error handler",
+                            Severity.INFO, Confidence.MEDIUM, FindingKind.POTENTIAL,
+                            "No `errorhandler`/`register_error_handler` was found, so API clients get Flask's HTML "
+                            "error pages and error responses are not shaped or correlated consistently.",
+                            "Register handlers for HTTPException and Exception that log with a request id and return "
+                            "a consistent JSON error body.", "", None)]
+        return []
+
     # ------------------------------------------------------------------------------------------------ js
     def _js_file(self, ctx, rel, text):
         out = []
         for i, line in enumerate(ctx.lines(rel), start=1):
+            if JS_ERROR_LEAK.search(line):
+                out.append(self._f(ctx, "api.error-details-exposed", "Stack trace returned to the client",
+                                   Severity.MEDIUM, Confidence.HIGH, FindingKind.CONFIRMED,
+                                   "The error's stack trace is sent in the response, revealing file paths, library "
+                                   "versions and internal structure.",
+                                   "Log the error server-side with a correlation id and return a generic message.",
+                                   rel, i, Category.SECURITY))
             if re.search(r"rejectUnauthorized\s*:\s*false|NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*['\"]?0", line):
                 out.append(self._f(ctx, "api.tls-verify-disabled", "TLS certificate verification disabled",
                                    Severity.HIGH, Confidence.HIGH, FindingKind.CONFIRMED,

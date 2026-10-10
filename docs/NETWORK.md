@@ -27,7 +27,7 @@ snippets of already-detected findings, and are not used in local mode.
 | Component | What it does |
 |---|---|
 | Workspace, ZIP extraction, language detection | Reads files; never executes repository code |
-| Built-in analyzers: `secrets`, `api_security`, `database`, `devops`, `testing`, `dependencies` (hygiene), `maintainability`, `architecture`, `performance`, `ai_code` (undeclared imports, lookalike package names from a bundled list, stubs, placeholders, hollow tests) | Pure Python static checks |
+| Built-in analyzers: `secrets`, `api_security`, `database`, `devops`, `testing`, `dependencies` (hygiene), `maintainability`, `architecture`, `performance`, `configuration`, `taint`, `ai_code` (undeclared imports, lookalike package names from a bundled list, stubs, placeholders, hollow tests) | Pure Python static checks |
 | `ruff`, `bandit`, `mypy`, `eslint`, `tsc` | Installed tools run in the sandbox; no network use |
 | Deduplication, fingerprints, scoring, lifecycle | Deterministic, local |
 | Reports: Markdown, HTML, JSON, SARIF | Self-contained files; the HTML report has inline CSS and loads nothing |

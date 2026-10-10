@@ -1,4 +1,5 @@
-"""Maintainability: complexity, oversized units, duplicated code, technical-debt markers, documentation."""
+"""Maintainability: complexity, oversized units, duplicated code, swallowed errors, technical-debt markers,
+documentation."""
 
 from __future__ import annotations
 
@@ -18,6 +19,9 @@ FUNCTION_LINES = 120
 FILE_LINES = 1000
 DUP_WINDOW = 12  # normalized non-blank lines
 DEBT_MARKER = re.compile(r"(?:#|//|/\*|\*)\s*(TODO|FIXME|HACK|XXX)\b", re.I)
+BROAD_EXCEPTIONS = {"", "Exception", "BaseException"}
+JS_EMPTY_CATCH = re.compile(r"\bcatch\s*(?:\(\s*\w*\s*\))?\s*\{\s*\}|\.catch\(\s*(?:\(\s*\w*\s*\)|\w+)\s*=>\s*"
+                            r"(?:\{\s*\}|null|undefined)\s*\)|\.catch\(\s*function\s*\(\s*\w*\s*\)\s*\{\s*\}\s*\)")
 _BRANCHES = (ast.If, ast.For, ast.AsyncFor, ast.While, ast.ExceptHandler, ast.With, ast.AsyncWith, ast.IfExp,
              ast.comprehension, ast.Assert, ast.match_case)
 
@@ -35,6 +39,12 @@ def cyclomatic_complexity(func: ast.AST) -> int:
     return score
 
 
+def _is_silent(body: list[ast.stmt]) -> bool:
+    """A handler body that does nothing: only ``pass``, ``continue``, ``...`` or a docstring."""
+    return all(isinstance(s, ast.Pass | ast.Continue) or (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))
+               for s in body)
+
+
 def _code_files(ctx: AnalyzerContext) -> list[str]:
     return [f for f in ctx.files if EXTENSIONS.get("." + f.rsplit(".", 1)[-1].lower()) in CODE_LANGUAGES]
 
@@ -50,6 +60,9 @@ class MaintainabilityAnalyzer(Analyzer):
         code_files = _code_files(ctx)
         for rel in ctx.python_files():
             findings.extend(self._python(ctx, rel))
+        for rel in ctx.files_with_suffix(".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"):
+            if not is_test_path(rel):
+                findings.extend(self._js_empty_catch(ctx, rel))
         for rel in code_files:
             n = len(ctx.lines(rel))
             if n > FILE_LINES and not is_test_path(rel):
@@ -99,14 +112,32 @@ class MaintainabilityAnalyzer(Analyzer):
                                    FindingKind.CONFIRMED, "Long functions tend to mix concerns and hide bugs.",
                                    "Split into smaller functions with descriptive names.", rel, node.lineno,
                                    evidence=f"{node.name}: {length} lines"))
-            for handler in ast.walk(node):
-                if isinstance(handler, ast.ExceptHandler) and handler.type is None and all(
-                        isinstance(s, ast.Pass) for s in handler.body):
-                    out.append(self._f(ctx, "maintainability.swallowed-exception", "Bare except that silently "
-                                       "swallows errors", Severity.MEDIUM, Confidence.HIGH, FindingKind.CONFIRMED,
-                                       "`except: pass` hides every error, including KeyboardInterrupt and bugs, "
-                                       "making failures invisible.",
-                                       "Catch specific exceptions and log or handle them.", rel, handler.lineno))
+        for handler in ast.walk(tree):
+            if not (isinstance(handler, ast.ExceptHandler) and _is_silent(handler.body)):
+                continue
+            caught = "" if handler.type is None else ast.unparse(handler.type)
+            if caught not in BROAD_EXCEPTIONS:
+                continue
+            what = "except:" if not caught else f"except {caught}:"
+            out.append(self._f(ctx, "maintainability.swallowed-exception", f"`{what}` that silently swallows errors",
+                               Severity.LOW if is_test_path(rel) else Severity.MEDIUM, Confidence.HIGH,
+                               FindingKind.CONFIRMED,
+                               f"`{what} pass` hides every error, including bugs"
+                               + (" and KeyboardInterrupt" if not caught or caught == "BaseException" else "")
+                               + ", so failures become invisible and the program continues in an unknown state.",
+                               "Catch the specific exceptions you expect and log or handle them; let the rest "
+                               "propagate to a global error handler.", rel, handler.lineno))
+        return out
+
+    def _js_empty_catch(self, ctx, rel):
+        out = []
+        for i, line in enumerate(ctx.lines(rel), start=1):
+            if JS_EMPTY_CATCH.search(line):
+                out.append(self._f(ctx, "maintainability.swallowed-exception", "Empty catch block silently "
+                                   "swallows errors", Severity.MEDIUM, Confidence.HIGH, FindingKind.CONFIRMED,
+                                   "An empty catch (or `.catch(() => {})`) discards the error, so failures become "
+                                   "invisible and the program continues in an unknown state.",
+                                   "Log the error with context, handle the specific failure, or rethrow.", rel, i))
         return out
 
     def _duplicates(self, ctx, files):

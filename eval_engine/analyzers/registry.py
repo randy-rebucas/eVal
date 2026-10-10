@@ -35,6 +35,7 @@ def _load_builtin() -> None:
         api_security,
         architecture,
         bandit,
+        configuration,
         database,
         dependencies,
         devops,

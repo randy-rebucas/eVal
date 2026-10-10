@@ -11,13 +11,15 @@
   ('PE', 'Performance', 'low'), ('OP', 'DevOps', 'moderate'), ('MA', 'Maintainability', 'low'),
 ] %}
 {% set run = [
-  ('api_security', 'API, Security', 'found', 4), ('architecture', 'Architecture', 'found', 1),
-  ('bandit', 'Security', 'found', 4), ('database', 'Database', 'found', 3),
-  ('dependencies', 'Dependencies', 'found', 1), ('devops', 'DevOps', 'found', 8),
+  ('ai_code', 'AI-generated code', 'clean', 0), ('api_security', 'API, Security', 'found', 5),
+  ('architecture', 'Architecture', 'found', 1), ('bandit', 'Security', 'found', 4),
+  ('configuration', 'Assumptions', 'clean', 0), ('database', 'Database', 'found', 4),
+  ('dependencies', 'Dependencies', 'found', 1), ('devops', 'DevOps', 'found', 11),
   ('eslint', 'no JavaScript files', 'na', 0), ('maintainability', 'Maintainability', 'found', 1),
   ('mypy', 'Maintainability', 'clean', 0), ('osv', 'OSV.dev disabled for this offline run', 'missing', 0),
-  ('performance', 'Performance', 'found', 3), ('ruff', 'Maintainability', 'clean', 0),
-  ('secrets', 'Security', 'found', 1), ('semgrep', 'not installed on this worker', 'missing', 0),
+  ('performance', 'Performance', 'found', 3), ('registry', 'registry lookups off for this offline run', 'missing', 0),
+  ('ruff', 'Maintainability', 'clean', 0), ('secrets', 'Security', 'found', 1),
+  ('semgrep', 'not installed on this worker', 'missing', 0), ('taint', 'Security', 'found', 1),
   ('testing', 'Testing', 'found', 1), ('trivy', 'not installed on this worker', 'missing', 0),
   ('tsc', 'no TypeScript files', 'na', 0),
 ] %}
@@ -26,9 +28,9 @@
 
   <section class="hero" aria-labelledby="lp-h">
     <div class="lp-pitch">
-      <p class="hero-kicker"><b>●</b> static analysis · 17 analyzers · your code is never executed</p>
+      <p class="hero-kicker"><b>●</b> static analysis · 21 analyzers · your code is never executed</p>
       <h1 id="lp-h" class="lp-title">AI generates code. <span class="nowrap">eVal verifies it.<span class="cursor" aria-hidden="true"></span></span></h1>
-      <p class="lp-why">Point eVal at a GitHub repository or a ZIP. It reads the code with <b>17 static analyzers</b> across <b>nine categories</b> and tells you what is risky, why, and where, with the evidence. It also tells you what it could not check.</p>
+      <p class="lp-why">AI can write software quickly. eVal checks whether it was engineered properly. Point it at a GitHub repository or a ZIP. It reads the code with <b>21 static analyzers</b> across <b>nine categories</b>, from authorization and error handling to schema design, scalability, observability and undocumented assumptions. It tells you what is risky, why, and where, with the evidence. It also tells you what it could not check.</p>
       <div class="directive-actions lp-actions">
         {% if config.ALLOW_REGISTRATION %}
         <a class="btn-ink" href="{{ url_for('auth.register') }}">Register and run an audit</a>
@@ -51,7 +53,7 @@
       </div>
       <div class="term-body">
         <p class="term-line lp-cmdline"><span class="term-prompt">$</span> eval-audit <span class="term-path">./vulnapp</span> <span class="term-flag">--offline</span></p>
-        <p class="lp-run-meta"><span class="state-run" data-run-state>Complete · static analysis only</span><span class="fig" data-run-count>12 ran · 2 not applicable · 3 missing</span></p>
+        <p class="lp-run-meta"><span class="state-run" data-run-state>Complete · static analysis only</span><span class="fig" data-run-count>15 ran · 2 not applicable · 4 missing</span></p>
         <ol class="run-log" aria-label="Analyzer results">
           {% for name, what, state, n in run %}
           <li class="run-row is-{{ state }}" data-step>
@@ -92,7 +94,7 @@
 
   <dl class="status-line lp-facts">
     <div><dt>Runs your code</dt><dd>Never</dd></div>
-    <div><dt>Analyzers</dt><dd class="fig">17</dd></div>
+    <div><dt>Analyzers</dt><dd class="fig">21</dd></div>
     <div><dt>Categories</dt><dd class="fig">9</dd></div>
     <div><dt>AI explanations</dt><dd>Labelled, never scored</dd></div>
     <div><dt>Reports</dt><dd>HTML · Markdown · JSON · SARIF</dd></div>

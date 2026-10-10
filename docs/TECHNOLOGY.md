@@ -88,9 +88,10 @@ eVal's own configuration, never the repository's.
 | Semgrep CE | >=1.90 | Multi-language security analysis | Downloads registry rules unless configured locally | LGPL-2.1 (engine); rules have their own license, see below |
 | Trivy | 0.75.0 (pinned, checksum-verified) | Vulnerable dependencies, IaC misconfigurations, secrets | Downloads its databases | Apache-2.0 |
 
-Built-in analyzers (own code, run on the device): secrets, API security, database access, DevOps/CI, testing,
-dependency hygiene, maintainability, architecture (import cycles), performance (static estimates), and the
-OSV.dev lookup.
+Built-in analyzers (own code, run on the device): secrets, API security, database access and schema design,
+DevOps/CI and observability, testing, dependency hygiene, maintainability, architecture (import cycles),
+performance and scalability (static estimates), configuration assumptions, taint analysis, AI-generated-code
+patterns, and the OSV.dev lookup.
 
 ## External APIs and data sources
 

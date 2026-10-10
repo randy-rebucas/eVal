@@ -21,6 +21,31 @@ Roles inside an organization are viewer, member, admin and owner.
 
 eVal ("electronic validator") audits applications for production readiness. Its tagline is "AI generates code. eVal verifies it." A user connects a GitHub repository or uploads a ZIP and runs an asynchronous audit. eVal returns evidence-backed findings across nine categories: security, architecture, testing, database, API, dependencies, performance, DevOps and maintainability. It also produces transparent scores, audit history, PR-level gating, GitHub issues and optional AI explanations.
 
+### Vision
+
+Modern AI coding tools can generate large amounts of application code very quickly. That code can carry security vulnerabilities, architectural problems, poor database design, missing tests, hidden technical debt, poor error handling, performance and scalability problems, dependency risks, authorization flaws, poor observability, DevOps weaknesses and undocumented assumptions.
+
+**AI can generate software. eVal verifies that the software is actually engineered correctly.**
+
+Each of those concerns maps to concrete checks:
+
+| Concern | Where eVal checks it |
+|---|---|
+| Security vulnerabilities | `secrets`, `taint`, `api_security`, Bandit, Semgrep, Trivy |
+| Authorization flaws | `api_security`: unauthenticated state-changing routes, object lookups by URL id without an ownership check (IDOR), mass assignment |
+| Architectural problems | `architecture`: import cycles, fan-out, config sprawl, SQL in handlers |
+| Poor database design | `database`: missing primary keys, money stored as floats, natural keys without unique constraints, unindexed foreign keys, missing migrations |
+| Missing tests | `testing`, `ai_code` (tests that cannot fail) |
+| Hidden technical debt | `maintainability`, `ai_code` (stubs, placeholders) |
+| Poor error handling | swallowed exceptions (Python and JS), exception text or stack traces returned to clients, no global error handler |
+| Performance and scalability | `performance`: N+1 queries, unbounded queries, blocking calls, missing timeouts, process-local state, in-memory session stores, local-disk uploads |
+| Dependency risks | `dependencies`, `osv`, `registry`, `ai_code` (hallucinated and lookalike packages), reachability |
+| Poor observability | `devops`: no logging, metrics, tracing/error tracking, request ids, or health endpoint; print/console logging in server code |
+| DevOps weaknesses | `devops`: Dockerfile, Compose and CI workflow hardening, missing CI |
+| Undocumented assumptions | `configuration`: environment variables missing from .env.example and docs, hardcoded local or private endpoints, machine-specific paths, HTTP APIs without an OpenAPI contract |
+
+All of these are static checks. Scalability and performance findings are estimates, not measurements.
+
 Success means a team knows what is risky in its code, why it is risky, who owns each accepted risk, and whether a change made things worse. Those answers have to rest on evidence the team can check.
 
 ## Positioning
@@ -50,7 +75,7 @@ eVal is honest by mechanism, not by tone:
 ## Capabilities and Constraints
 
 - Stack: Flask + Jinja templates, Bootstrap 5.3 and Bootstrap Icons from the jsDelivr CDN with SRI, one `app.css` and one `app.js`. Server-rendered, with a CSRF-protected form flow.
-- 17 analyzers (Ruff, Bandit, mypy, ESLint, tsc, Semgrep, Trivy, OSV.dev, plus built-in checks). Tenant isolation applies to every query.
+- 21 analyzers (Ruff, Bandit, mypy, ESLint, tsc, Semgrep, Trivy, OSV.dev, PyPI/npm registry checks, plus built-in checks). Tenant isolation applies to every query.
 - Accepted risks need a reason, an owner (a team or vendor) and a review date at most `EVAL_ACCEPTED_RISK_MAX_DAYS` away. They reopen on that date.
 - Deliberately not built: automated fix PRs. AI patches are only displayed.
 - Not built yet: GitHub App/webhooks, org policies, knowledge-graph visualization, PDF export, email invites/verification, password reset, MFA, SSO. Billing and metering are also not built. See docs/ROADMAP.md.

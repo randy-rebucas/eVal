@@ -1,4 +1,5 @@
-"""DevOps, CI/CD, deployment configuration, logging and operability checks."""
+"""DevOps, CI/CD, deployment configuration, and operability/observability checks (logging, metrics, tracing,
+request correlation, health endpoints)."""
 
 from __future__ import annotations
 
@@ -20,6 +21,18 @@ UNTRUSTED_CONTEXT = re.compile(
 )
 HEALTH_ROUTE = re.compile(r"""["'`]/(?:health|healthz|livez|readyz|ready|status|ping)["'`/]""", re.I)
 WEB_FRAMEWORKS = {"flask", "django", "fastapi", "express", "nestjs", "fastify", "koa", "starlette"}
+CODE_SUFFIXES = (".py", ".js", ".ts", ".mjs", ".cjs")
+MANIFESTS = ("requirements.txt", "pyproject.toml", "Pipfile", "setup.cfg", "setup.py", "package.json")
+METRICS_HINT = re.compile(r"(?i)prometheus|opentelemetry|statsd|datadog|ddtrace|dd-trace|newrelic|prom-client|"
+                          r"micrometer|aws_embedded_metrics|cloudwatch|['\"`]/metrics\b")
+TRACING_HINT = re.compile(r"(?i)sentry|opentelemetry|ddtrace|dd-trace|newrelic|honeycomb|elastic-apm|elasticapm|"
+                          r"rollbar|bugsnag|aws_xray|aws-xray|zipkin|jaeger|raygun|airbrake|honeybadger")
+REQUEST_ID_HINT = re.compile(r"(?i)request[-_]?id|correlation[-_]?id|traceparent|trace_id|x-amzn-trace-id|"
+                             r"opentelemetry|asgi[-_]correlation|express-request-id|cls-rtracer")
+LOGGER_HINT = re.compile(r"(?i)\b(winston|pino|bunyan|log4js|loglevel|signale|consola|tslog|@nestjs/common)\b")
+ROUTE_HINT = re.compile(r"@\w+\.(route|get|post|put|patch|delete)\(|\b(app|router)\.(get|post|put|patch|delete)\(")
+PY_PRINT = re.compile(r"^\s*print\(")
+JS_CONSOLE = re.compile(r"\bconsole\.(log|error|warn|info)\(")
 
 
 @register
@@ -200,6 +213,7 @@ class DevOpsAnalyzer(Analyzer):
                                       "incidents are hard to diagnose without structured logs.",
                                       "Adopt structured logging with levels and request correlation IDs."))
         if frameworks & WEB_FRAMEWORKS:
+            out.extend(self._observability(ctx))
             code_files = [f for f in ctx.files if f.endswith((".py", ".js", ".ts", ".mjs")) and not is_test_path(f)]
             has_health = any(HEALTH_ROUTE.search(ctx.read(f) or "") for f in code_files[:3000])
             if not has_health:
@@ -210,4 +224,51 @@ class DevOpsAnalyzer(Analyzer):
                                       "safely.",
                                       "Expose a cheap liveness endpoint and a readiness endpoint that checks "
                                       "critical dependencies."))
+        return out
+
+    def _observability(self, ctx: AnalyzerContext):
+        """Can the team see what a web service is doing in production? Metrics, tracing/error tracking, request
+        correlation, and logs written through a logger rather than print/console.log."""
+        out = []
+        code_files = [f for f in ctx.files if f.endswith(CODE_SUFFIXES) and not is_test_path(f)][:3000]
+        manifests = ctx.files_named(*MANIFESTS)
+        corpus = "\n".join(ctx.read(f) or "" for f in [*code_files, *manifests])
+        if not METRICS_HINT.search(corpus):
+            out.append(self._repo(ctx, "devops.no-metrics", "No application metrics instrumentation detected",
+                                  Severity.LOW, Confidence.MEDIUM, FindingKind.POTENTIAL,
+                                  "No metrics library (Prometheus client, OpenTelemetry, StatsD, Datadog, …) or "
+                                  "/metrics endpoint was found. Without request rate, error rate and latency metrics, "
+                                  "regressions and capacity problems are noticed by users first.",
+                                  "Export RED metrics (rate, errors, duration) per endpoint, e.g. with "
+                                  "prometheus-client / prom-client or OpenTelemetry, and alert on them."))
+        if not TRACING_HINT.search(corpus):
+            out.append(self._repo(ctx, "devops.no-tracing", "No error tracking or distributed tracing detected",
+                                  Severity.LOW, Confidence.MEDIUM, FindingKind.POTENTIAL,
+                                  "No error tracker or tracer (Sentry, OpenTelemetry, Datadog APM, New Relic, "
+                                  "Honeycomb, …) was found. Unhandled exceptions are only visible if someone reads "
+                                  "the logs, and slow requests cannot be traced across services.",
+                                  "Add an error tracker and OpenTelemetry tracing so every failure is reported with "
+                                  "its stack trace and request context."))
+        if not REQUEST_ID_HINT.search(corpus):
+            out.append(self._repo(ctx, "devops.no-request-id", "No request/correlation id propagation detected",
+                                  Severity.INFO, Confidence.MEDIUM, FindingKind.POTENTIAL,
+                                  "No request id, correlation id, or trace context handling was found, so log lines "
+                                  "from one request cannot be tied together or matched to a user's error report.",
+                                  "Assign or accept an X-Request-ID per request, add it to every log line, and "
+                                  "return it in error responses."))
+        logger_lib = LOGGER_HINT.search(corpus)
+        for rel in code_files:
+            text = ctx.read(rel) or ""
+            if not ROUTE_HINT.search(text):
+                continue
+            pattern = PY_PRINT if rel.endswith(".py") else None if logger_lib else JS_CONSOLE
+            line = next((i for i, ln in enumerate(text.splitlines(), 1) if pattern and pattern.search(ln)), None)
+            if line:
+                out.append(self._repo(ctx, "devops.print-logging", "Server code logs with print/console instead of "
+                                      "a logger", Severity.LOW, Confidence.MEDIUM, FindingKind.CONFIRMED,
+                                      "Output from print()/console.log has no level, timestamp, logger name or "
+                                      "request context, cannot be filtered or routed, and is easily lost in "
+                                      "production.",
+                                      "Use a structured logger (logging/structlog, pino/winston) with levels and a "
+                                      "request id.", rel, line))
         return out
