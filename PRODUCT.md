@@ -31,7 +31,7 @@ Each of those concerns maps to concrete checks:
 
 | Concern | Where eVal checks it |
 |---|---|
-| Security vulnerabilities | `secrets`, `taint`, `api_security`, Bandit, Semgrep, Trivy |
+| Security vulnerabilities | `secrets`, `taint` (incl. deserialization and upload paths), `api_security` (CORS, JWT, debug mode, CSRF, cookie flags, credentials in logs, upload validation, login rate limiting), Bandit, Semgrep, Trivy. Pattern matches stay *potential* until a traced data flow or the pattern itself proves the weakness |
 | Authorization flaws | `api_security`: unauthenticated state-changing routes, object lookups by URL id without an ownership check (IDOR), mass assignment |
 | Architectural problems | `architecture`: import cycles, fan-out, config sprawl, SQL in handlers |
 | Poor database design | `database`: missing primary keys, money stored as floats, natural keys without unique constraints, unindexed foreign keys, missing migrations |

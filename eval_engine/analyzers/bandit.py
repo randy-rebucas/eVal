@@ -13,6 +13,11 @@ from .registry import register
 SEV = {"HIGH": Severity.HIGH, "MEDIUM": Severity.MEDIUM, "LOW": Severity.LOW}
 CONF = {"HIGH": Confidence.HIGH, "MEDIUM": Confidence.MEDIUM, "LOW": Confidence.LOW}
 EXCLUDE = "./.venv,./venv,./node_modules,./build,./dist,./.tox"
+# Bandit matches patterns; it does not trace data. A match is reported as confirmed only where the matched code is
+# itself the weakness whatever the input (debugger on, TLS checks off, weak key sizes). Everything else, e.g.
+# shell=True, pickle.loads, string-built SQL or a bare "import subprocess", needs attacker-controlled input to be
+# exploitable, so it stays potential unless eVal's taint analysis traces such input to the same line.
+CONFIRMED_TESTS = {"B201", "B501", "B502", "B503", "B504", "B505", "B507", "B413"}
 
 REMEDIATION = {
     "B105": "Load the secret from the environment or a secrets manager; rotate the exposed value.",
@@ -72,7 +77,8 @@ class BanditAnalyzer(Analyzer):
                     category=Category.SECURITY,
                     severity=sev,
                     confidence=conf,
-                    kind=FindingKind.CONFIRMED if conf == Confidence.HIGH else FindingKind.POTENTIAL,
+                    kind=FindingKind.CONFIRMED if conf == Confidence.HIGH and test_id in CONFIRMED_TESTS
+                    else FindingKind.POTENTIAL,
                     description=(item.get("issue_text", "") + (f" (CWE-{cwe['id']})" if cwe.get("id") else "")
                                  + (" Found in test code; severity reduced." if in_tests else "")),
                     remediation=REMEDIATION.get(test_id, "Review the flagged code; see the Bandit reference."),
