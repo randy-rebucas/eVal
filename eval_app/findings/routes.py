@@ -26,7 +26,7 @@ def detail(org_slug, finding_id):
         .order_by(Audit.created_at.desc()).limit(20)
     ).all()
     return render_template("findings/detail.html", f=finding, audit=finding.audit, issue=issue, history=history,
-                           triage_statuses=TRIAGE_STATUSES, today=services.today(),
+                           triage_statuses=TRIAGE_STATUSES, min_review=services.today() + timedelta(days=1),
                            ai_fix=ai_config.ai_enabled(g.org.id),
                            compliance=services.map_finding(finding.rule_id, finding.category, finding.description,
                                                            finding.references),

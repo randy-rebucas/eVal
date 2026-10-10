@@ -100,8 +100,10 @@ def set_triage(org: Organization, finding: Finding, status: str, *, reason: str 
             raise FindingError("Name who owns the fix: a team, or the vendor for third-party code.")
         if status == "accepted_risk" and expires is None:
             raise FindingError("Accepted risks need a review date.")
-        if expires is not None and not today() < expires <= today() + timedelta(days=max_days):
-            raise FindingError(f"The review date must be in the future and at most {max_days} days away.")
+        earliest, latest = today() + timedelta(days=1), today() + timedelta(days=max_days)
+        if expires is not None and not earliest <= expires <= latest:
+            raise FindingError(f"The review date must be in the future and at most {max_days} days away "
+                               f"(pick {earliest.isoformat()} to {latest.isoformat()}).")
     else:
         reason, owner, expires = "", "", None
     old = finding.triage_status

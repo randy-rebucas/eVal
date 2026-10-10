@@ -120,9 +120,9 @@
               <div class="form-text">Team or vendor; required for accepted risk.</div></div>
             <div><label class="form-label" for="t-expires">Review date</label>
               <input id="t-expires" name="expires_on" type="date" class="form-control form-control-sm"
-                     min="{{ (today).isoformat() }}" max="{{ max_review.isoformat() }}"
+                     min="{{ min_review.isoformat() }}" max="{{ max_review.isoformat() }}"
                      value="{{ f.triage_expires_on.isoformat() if f.triage_expires_on and f.triage_status != 'open' else '' }}">
-              <div class="form-text">Required for accepted risk.</div></div>
+              <div class="form-text">Required for accepted risk. Between {{ min_review.isoformat() }} and {{ max_review.isoformat() }}.</div></div>
             <div class="form-acts"><button class="btn-ink">Save triage</button></div>
           </form>
           <p class="pane-note">Accepted risks and false positives carry over to later audits of this repository
