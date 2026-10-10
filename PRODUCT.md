@@ -34,7 +34,7 @@ Each of those concerns maps to concrete checks:
 | Security vulnerabilities | `secrets`, `taint` (incl. deserialization and upload paths), `api_security` (CORS, JWT, debug mode, CSRF, cookie flags, credentials in logs, upload validation, login rate limiting), Bandit, Semgrep, Trivy. Pattern matches stay *potential* until a traced data flow or the pattern itself proves the weakness |
 | Authentication and sessions | `auth_security`, driven by the application profile (framework, auth scheme, datastore, password columns in the ORM/Prisma/SQL schema): CSRF for cookie-authenticated Django/Express/Flask apps only, JWT secrets/expiry/algorithm pinning, unhashed password storage and plaintext comparison, MongoDB operator injection. The report lists which checks applied and why |
 | Authorization flaws | `api_security`: unauthenticated state-changing routes, object lookups by URL id without an ownership check (IDOR), mass assignment |
-| Architectural problems | `architecture`: import cycles, fan-out, config sprawl, SQL in handlers |
+| Architectural problems | `architecture`: module and package cycles, fan-out, dependency direction between layers, cross-service imports and feature-boundary violations, business logic and data access in request handlers, routes mixed with models, no service layer, scattered data access, oversized modules/packages, flat layout, duplicated business logic, config sprawl and settings-module bypass |
 | Poor database design | `database`: missing primary keys, money stored as floats, natural keys without unique constraints, unindexed foreign keys, missing migrations |
 | Missing tests | `testing`, `ai_code` (tests that cannot fail) |
 | Hidden technical debt | `maintainability`, `ai_code` (stubs, placeholders) |

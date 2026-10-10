@@ -61,6 +61,7 @@ RULES: list[tuple[str, dict]] = [
     ("trivy:secret-*", _M(cwe=[798], asvs=["V2.10.4", "V6.4.1"], soc2=["CC6.1"], iso27001=["A.5.17", "A.8.24"])),
     ("eval:database.sql-string-formatting", _M(cwe=[89], asvs=["V5.3.4"], soc2=["CC6.1"], iso27001=["A.8.28"])),
     ("eval:architecture.sql-in-handlers", _M(cwe=[1061], soc2=["CC8.1"], iso27001=["A.8.27"])),
+    ("eval:architecture.data-access-in-handlers", _M(cwe=[1061], soc2=["CC8.1"], iso27001=["A.8.27"])),
     ("eval:api.no-authentication", _M(cwe=[306], asvs=["V4.1.1"], soc2=["CC6.1"], iso27001=["A.8.26"])),
     ("eval:api.route-without-auth", _M(cwe=[862], asvs=["V4.1.1", "V4.1.3"], soc2=["CC6.1"], iso27001=["A.8.26"])),
     ("eval:api.mass-assignment", _M(cwe=[915], asvs=["V5.1.2"], soc2=["CC6.1"], iso27001=["A.8.28"])),
