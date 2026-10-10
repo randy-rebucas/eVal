@@ -206,6 +206,91 @@
     });
   });
 
+  // AI model picker follows the provider select. Built-in suggestions show at once; the provider's own model
+  // list (fetched with the selected key, or from the allow-listed compatible server) replaces them when it
+  // arrives. Without JS the saved provider's suggestions are listed and the free-text field stays visible.
+  document.querySelectorAll("select[data-ai-models]").forEach(function (sel) {
+    var catalog;
+    try { catalog = JSON.parse(sel.getAttribute("data-ai-models")); } catch (e) { return; }
+    var form = sel.form;
+    var provider = document.querySelector(sel.getAttribute("data-provider-select"));
+    var custom = document.querySelector(sel.getAttribute("data-custom-input"));
+    var status = document.querySelector(sel.getAttribute("data-models-status"));
+    var url = sel.getAttribute("data-models-url");
+    var request = 0;
+    function syncCustom() { if (custom) { custom.hidden = sel.value !== ""; } }
+    function say(text) { if (status) { status.textContent = text; } }
+    // Keep the current pick (listed or typed) when it is in the new list; otherwise take the first model.
+    function fill(models) {
+      var want = sel.value || (custom ? custom.value.trim() : "");
+      sel.innerHTML = "";
+      models.forEach(function (m) { sel.add(new Option(m, m)); });
+      sel.add(new Option("Other…", ""));
+      if (want && models.indexOf(want) !== -1) {
+        sel.value = want;
+        if (custom) { custom.value = ""; }
+      } else if (want && custom && custom.value.trim() === want) {
+        sel.value = "";
+      } else {
+        sel.selectedIndex = 0;
+        if (custom) { custom.value = ""; }
+      }
+      syncCustom();
+    }
+    function load() {
+      if (!url || !form || !provider) { return; }
+      var mine = ++request;
+      var key = form.elements.credential_id ? form.elements.credential_id.value : "";
+      if (!key && provider.value !== "openai_compatible") {
+        say("Select an API key to load this provider's models.");
+        return;
+      }
+      say("Loading models…");
+      fetch(url, { method: "POST", body: new FormData(form), credentials: "same-origin",
+                   headers: { Accept: "application/json" } })
+        .then(function (r) { return r.json().catch(function () { return {}; }); })
+        .then(function (data) {
+          if (mine !== request) { return; }
+          if (data.models && data.models.length) {
+            fill(data.models);
+            say(data.models.length + " models available to this key.");
+          } else {
+            say((data.error || "The provider returned no models.") + " Showing suggestions.");
+          }
+        })
+        .catch(function () { if (mine === request) { say("Could not load models. Showing suggestions."); } });
+    }
+    if (provider) {
+      provider.addEventListener("change", function () {
+        if (custom) { custom.value = ""; }
+        sel.value = "";
+        fill(catalog[provider.value] || []);
+        load();
+      });
+    }
+    ["credential_id", "base_url"].forEach(function (name) {
+      var el = form && form.elements[name];
+      if (el) { el.addEventListener("change", load); }
+    });
+    sel.addEventListener("change", function () {
+      syncCustom();
+      if (custom && !custom.hidden) { custom.focus(); }
+    });
+    syncCustom();
+    load();
+  });
+
+  // Type-to-filter for long row lists (e.g. the GitHub repository browser). Rows carry data-filter-text.
+  document.querySelectorAll("[data-filter-rows]").forEach(function (input) {
+    var rows = document.querySelectorAll(input.getAttribute("data-filter-rows"));
+    input.addEventListener("input", function () {
+      var q = input.value.trim().toLowerCase();
+      rows.forEach(function (row) {
+        row.hidden = q !== "" && (row.getAttribute("data-filter-text") || "").indexOf(q) === -1;
+      });
+    });
+  });
+
   // "Select all" checkbox for finding tables.
   document.querySelectorAll("[data-select-all]").forEach(function (box) {
     box.addEventListener("change", function () {

@@ -13,7 +13,16 @@
       <div class="form-row">
         <div><label class="form-label" for="ai-provider">Provider</label>
           <select id="ai-provider" name="provider" class="form-select form-select-sm">{% for p in ai_providers %}<option value="{{ p }}" {% if ai and ai.provider == p %}selected{% endif %}>{{ p }}</option>{% endfor %}</select></div>
-        <div><label class="form-label" for="ai-model">Model</label><input id="ai-model" name="model" class="form-control form-control-sm" value="{{ ai.model if ai else '' }}" placeholder="blank = claude-opus-5-5 (Anthropic)"></div>
+        {% set cur_provider = ai.provider if ai else ai_providers[0] %}
+        {% set cur_models = ai_models.get(cur_provider, ()) %}
+        {% set cur_model = (ai.model if ai else '') or (cur_models[0] if cur_models else '') %}
+        {% set is_custom = cur_model not in cur_models %}
+        <div><label class="form-label" for="ai-model">Model</label>
+          <select id="ai-model" name="model" class="form-select form-select-sm" data-ai-models="{{ ai_models|tojson|forceescape }}" data-provider-select="#ai-provider" data-custom-input="#ai-model-custom" data-models-url="{{ url_for('integrations.ai_models', org_slug=g.org.slug) }}" data-models-status="#ai-model-status">
+            {% for m in cur_models %}<option value="{{ m }}" {% if m == cur_model %}selected{% endif %}>{{ m }}</option>{% endfor %}
+            <option value="" {% if is_custom %}selected{% endif %}>Other…</option></select>
+          <input id="ai-model-custom" name="model_custom" class="form-control form-control-sm mt-1" value="{{ cur_model if is_custom else '' }}" placeholder="other model name" aria-label="Other model name">
+          <div id="ai-model-status" class="form-text" aria-live="polite"></div></div>
         <div><label class="form-label" for="ai-max">Findings to explain (max 50)</label><input id="ai-max" name="max_findings" type="number" min="1" max="50" class="form-control form-control-sm" value="{{ ai.max_findings if ai else 15 }}"></div>
       </div>
       <div class="form-row">

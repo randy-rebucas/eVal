@@ -35,6 +35,14 @@ def fake_github(monkeypatch):
             if self._headers.get("Authorization") != "Bearer ghp_validtoken1234567890":
                 raise GitHubError("GitHub rejected the credential (401).", 401)
             return {"login": "octocat"}
+        if path in ("/user/repos", "/users/octo/repos"):
+            if path == "/user/repos" and not self._headers.get("Authorization"):
+                raise GitHubError("GitHub rejected the credential (401).", 401)
+            page = kwargs.get("params", {}).get("page", 1)
+            listed = [dict(r, description="Shop app") for r in repos.values()]
+            if path == "/users/octo/repos":
+                listed = [r for r in listed if not r["private"]]
+            return listed if page == 1 else []
         if path.startswith("/repos/") and path.count("/") == 3:
             name = path[len("/repos/"):]
             if name not in repos:

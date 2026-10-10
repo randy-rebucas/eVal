@@ -1,17 +1,18 @@
 from __future__ import annotations
 
-from flask import Blueprint, abort, flash, g, make_response, redirect, render_template, request, url_for
+from flask import Blueprint, abort, flash, g, jsonify, make_response, redirect, render_template, request, url_for
 from flask_login import current_user
 from flask_wtf import FlaskForm
 from wtforms import PasswordField, SelectField, StringField
 from wtforms.validators import DataRequired, Length
 
-from eval_engine.ai import PROVIDERS
+from eval_engine.ai import MODEL_SUGGESTIONS, PROVIDERS
 
 from .. import ai_config
 from ..api.auth import create_token, revoke_token
 from ..extensions import db
 from ..models import ApiToken, IntegrationCredential
+from ..security import ratelimit
 from ..security.tenancy import get_scoped_or_404, org_required
 from . import services
 
@@ -44,6 +45,7 @@ def index(org_slug):
     creds = services.org_credentials(g.org)
     return render_template("integrations/index.html", creds=creds, form=form, can_manage=can_manage,
                            ai=ai_config.get_settings(g.org.id), ai_providers=PROVIDERS,
+                           ai_models=MODEL_SUGGESTIONS,
                            ai_base_urls=ai_config.allowed_base_urls(),
                            ai_creds=[c for c in creds if c.provider in PROVIDERS])
 
@@ -54,7 +56,9 @@ def save_ai(org_slug):
     f = request.form
     try:
         ai_config.save_settings(
-            g.org, enabled=f.get("enabled") == "on", provider=f.get("provider", ""), model=f.get("model", ""),
+            g.org, enabled=f.get("enabled") == "on", provider=f.get("provider", ""),
+            # "model" is the picker; its "Other…" entry is empty and defers to the typed-in name.
+            model=f.get("model") or f.get("model_custom", ""),
             base_url=f.get("base_url", ""), credential_id=f.get("credential_id") or None,
             max_findings=f.get("max_findings", type=int) or 15,
         )
@@ -63,6 +67,22 @@ def save_ai(org_slug):
         db.session.rollback()
         flash(str(exc), "danger")
     return redirect(url_for("integrations.index", org_slug=org_slug))
+
+
+@bp.post("/ai/models")
+@org_required("admin")
+def ai_models(org_slug):
+    # Each call decrypts a key and makes an outbound request, so it is throttled per org.
+    if not ratelimit.hit("ai-models", str(g.org.id), 30, 300):
+        return jsonify(error="Too many model lookups; try again in a few minutes."), 429
+    f = request.form
+    try:
+        models = ai_config.fetch_models(g.org, provider=f.get("provider", ""),
+                                        credential_id=f.get("credential_id") or None,
+                                        base_url=f.get("base_url", ""))
+    except ai_config.AISettingsError as exc:
+        return jsonify(error=str(exc)), 400
+    return jsonify(models=models)
 
 
 @bp.route("/tokens", methods=["GET", "POST"])

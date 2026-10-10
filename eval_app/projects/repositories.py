@@ -76,6 +76,46 @@ def add_github_repository(org: Organization, project: Project, full_name: str, c
     return repo
 
 
+MAX_BULK_CONNECT = 50
+
+
+def browse_github_repositories(org: Organization, project: Project, credential_id=None,
+                               owner: str = "") -> list[dict]:
+    """Repositories visible to the credential (or an owner's public ones), each marked if already connected."""
+    owner = owner.strip().removeprefix("https://github.com/").strip("/")
+    cred = _credential(org, credential_id)
+    if cred is None and not owner:
+        raise RepositoryError("Choose a GitHub credential, or enter a user or organization to list.")
+    try:
+        repos = github_client(cred).list_repos(owner=owner or None)
+    except GitHubError as exc:
+        raise RepositoryError(str(exc)) from exc
+    connected = set(db.session.execute(
+        db.select(Repository.full_name).where(Repository.project_id == project.id, Repository.source == "github")
+    ).scalars())
+    for r in repos:
+        r["connected"] = r["full_name"] in connected
+    return repos
+
+
+def add_github_repositories(org: Organization, project: Project, full_names: list[str],
+                            credential_id=None) -> tuple[list[Repository], list[str]]:
+    """Connect each selected repository (each is re-checked on GitHub). Returns (connected, error messages)."""
+    names = list(dict.fromkeys(n.strip() for n in full_names if n.strip()))
+    if not names:
+        raise RepositoryError("Select at least one repository.")
+    if len(names) > MAX_BULK_CONNECT:
+        raise RepositoryError(f"Connect at most {MAX_BULK_CONNECT} repositories at a time.")
+    added, errors = [], []
+    for name in names:
+        try:
+            added.append(add_github_repository(org, project, name, credential_id))
+        except RepositoryError as exc:
+            db.session.rollback()
+            errors.append(f"{name}: {exc}")
+    return added, errors
+
+
 def create_upload_repository(org: Organization, project: Project, name: str) -> Repository:
     name = name.strip()[:200]
     if len(name) < 2:

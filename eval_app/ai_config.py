@@ -11,7 +11,7 @@ import uuid
 
 from flask import current_app
 
-from eval_engine.ai import PROVIDERS, AIError, build_provider
+from eval_engine.ai import PROVIDERS, AIError, build_provider, list_models
 from eval_engine.ai.enrich import Enricher
 
 from .extensions import db
@@ -32,6 +32,41 @@ def allowed_base_urls() -> list[str]:
     return [u.strip().rstrip("/") for u in raw.split(",") if u.strip()]
 
 
+def _org_credential(org: Organization, provider: str, credential_id) -> IntegrationCredential | None:
+    if not credential_id:
+        return None
+    try:
+        cid = uuid.UUID(str(credential_id))
+    except ValueError as exc:
+        raise AISettingsError("Unknown credential.") from exc
+    cred = db.session.execute(db.select(IntegrationCredential).where(
+        IntegrationCredential.id == cid, IntegrationCredential.organization_id == org.id,
+        IntegrationCredential.provider == provider)).scalar_one_or_none()
+    if cred is None:
+        raise AISettingsError("Choose a credential for the selected provider.")
+    return cred
+
+
+def fetch_models(org: Organization, *, provider: str, credential_id, base_url: str) -> list[str]:
+    """Ask the provider which models the org's key (or the allow-listed compatible server) can use."""
+    if provider not in PROVIDERS:
+        raise AISettingsError("Unknown AI provider.")
+    base_url = base_url.strip().rstrip("/")
+    if provider == "openai_compatible":
+        if base_url not in allowed_base_urls():
+            raise AISettingsError("Choose an allow-listed base URL first.")
+    else:
+        base_url = ""
+    cred = _org_credential(org, provider, credential_id)
+    if cred is None and provider != "openai_compatible":
+        raise AISettingsError("Select an API key for this provider to load its models.")
+    try:
+        key = crypto.decrypt(cred.encrypted_secret) if cred else ""
+        return list_models(provider, api_key=key, base_url=base_url)
+    except (AIError, crypto.CredentialDecryptionError) as exc:
+        raise AISettingsError(str(exc)) from exc
+
+
 def save_settings(org: Organization, *, enabled: bool, provider: str, model: str, base_url: str,
                   credential_id, max_findings: int) -> AISettings:
     if provider not in PROVIDERS:
@@ -45,17 +80,7 @@ def save_settings(org: Organization, *, enabled: bool, provider: str, model: str
             raise AISettingsError("That base URL is not on the operator allow-list (EVAL_AI_ALLOWED_BASE_URLS).")
     else:
         base_url = ""
-    cred = None
-    if credential_id:
-        try:
-            cid = uuid.UUID(str(credential_id))
-        except ValueError as exc:
-            raise AISettingsError("Unknown credential.") from exc
-        cred = db.session.execute(db.select(IntegrationCredential).where(
-            IntegrationCredential.id == cid, IntegrationCredential.organization_id == org.id,
-            IntegrationCredential.provider == provider)).scalar_one_or_none()
-        if cred is None:
-            raise AISettingsError("Choose a credential for the selected provider.")
+    cred = _org_credential(org, provider, credential_id)
     if enabled and cred is None and provider != "openai_compatible":
         raise AISettingsError("Add and select an API key for this provider first.")
     settings = get_settings(org.id) or AISettings(organization_id=org.id)

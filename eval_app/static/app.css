@@ -479,6 +479,8 @@ a.rail-step:hover, .rail-all:hover { background: var(--panel-2); color: var(--fg
 
 /* The register: a dense, ruled table. */
 .register-wrap { overflow-x: auto; }
+.browse-list { max-height: 28rem; overflow-y: auto; border: 1px solid var(--line); }
+.browse-list .tag { margin-left: .35rem; }
 .register { width: 100%; border-collapse: collapse; font-size: .82rem; line-height: 1.35; }
 .register th {
   font-weight: 600; font-size: .64rem; letter-spacing: .08em; text-transform: uppercase;
