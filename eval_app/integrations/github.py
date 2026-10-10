@@ -8,6 +8,7 @@ from dataclasses import dataclass
 import requests
 
 FULL_NAME_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,100}$")
+OWNER_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$")
 DEFAULT_TIMEOUT = (5, 20)
 
 
@@ -32,6 +33,21 @@ def validate_full_name(full_name: str) -> str:
     if not FULL_NAME_RE.match(full_name) or full_name.endswith((".", "..")):
         raise GitHubError("Repository must be in the form owner/name.")
     return full_name
+
+
+def _error_message(resp) -> str:
+    """GitHub's own reason (and, for fine-grained tokens, the permission it wanted) — never echoes the token."""
+    msg = f"GitHub API error ({resp.status_code})"
+    try:
+        detail = str((resp.json() or {}).get("message") or "").strip()
+    except ValueError:
+        detail = ""
+    if detail:
+        msg += f": {detail[:200]}"
+    needed = resp.headers.get("X-Accepted-GitHub-Permissions")
+    if resp.status_code == 403 and needed:
+        msg += f" (token needs: {needed[:100]})"
+    return msg + "."
 
 
 class GitHubClient:
@@ -59,7 +75,7 @@ class GitHubClient:
         if resp.status_code == 404:
             raise GitHubError("Not found on GitHub, or the credential lacks access.", 404)
         if resp.status_code >= 400:
-            raise GitHubError(f"GitHub API error ({resp.status_code}).", resp.status_code)
+            raise GitHubError(_error_message(resp), resp.status_code)
         return resp.json() if resp.content else {}
 
     def get_user(self) -> dict:
@@ -78,11 +94,37 @@ class GitHubClient:
             clone_url=d.get("clone_url") or f"https://github.com/{d['full_name']}.git",
         )
 
-    def list_repos(self, limit: int = 100) -> list[str]:
-        params = {"per_page": min(limit, 100), "sort": "updated",
-                  "affiliation": "owner,collaborator,organization_member"}
-        data = self._request("GET", "/user/repos", params=params)
-        return [r["full_name"] for r in data][:limit]
+    def list_repos(self, owner: str | None = None, limit: int = 1000) -> list[dict]:
+        """Repositories the token can see (every page, most recently updated first), or, with ``owner``, that
+        user's or organization's repositories visible to the client (public ones when unauthenticated)."""
+        if owner:
+            if not OWNER_RE.match(owner):
+                raise GitHubError("Owner must be a GitHub user or organization name.")
+            path, params = f"/users/{owner}/repos", {"type": "owner"}
+        else:
+            path, params = "/user/repos", {"affiliation": "owner,collaborator,organization_member"}
+        params.update(sort="updated", per_page=100)
+        out: list[dict] = []
+        page = 1
+        while len(out) < limit:
+            data = self._request("GET", path, params={**params, "page": page})
+            if not data:
+                break
+            out.extend(
+                {
+                    "full_name": r["full_name"],
+                    "private": bool(r.get("private")),
+                    "archived": bool(r.get("archived")),
+                    "fork": bool(r.get("fork")),
+                    "description": (r.get("description") or "")[:200],
+                    "updated_at": r.get("pushed_at") or r.get("updated_at") or "",
+                }
+                for r in data
+            )
+            if len(data) < 100:
+                break
+            page += 1
+        return out[:limit]
 
     def list_branches(self, full_name: str, limit: int = 100) -> list[str]:
         full_name = validate_full_name(full_name)

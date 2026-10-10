@@ -173,6 +173,47 @@ def test_credential_from_other_org_cannot_be_used(alice, bob, db, fake_github):
     assert db.session.scalar(db.select(db.func.count(Repository.id))) == 0
 
 
+def test_browse_github_with_credential_and_connect_selected(alice, db, fake_github):
+    c, org = alice["client"], alice["org"]
+    c.post(f"/o/{org}/settings/integrations",
+           data={"provider": "github", "label": "", "secret": "ghp_validtoken1234567890"})
+    cred = db.session.execute(db.select(IntegrationCredential)).scalar_one()
+    pid = make_project(c, org)
+    page = c.get(f"/o/{org}/projects/{pid}/repos/new?browse=1&credential_id={cred.id}")
+    assert b"octo/shop" in page.data and b"octo/huge" in page.data and b"2 found" in page.data
+
+    resp = c.post(f"/o/{org}/projects/{pid}/repos/new",
+                  data={"kind": "github_bulk", "credential_id": str(cred.id), "repos": ["octo/shop", "octo/huge"]})
+    assert resp.status_code == 302
+    repo = db.session.execute(db.select(Repository)).scalar_one()  # octo/huge is over the size limit
+    assert (repo.full_name, repo.credential_id) == ("octo/shop", cred.id)
+    page = c.get(f"/o/{org}/projects/{pid}/repos/new?browse=1&credential_id={cred.id}")
+    assert b"connected" in page.data
+
+
+def test_browse_public_owner_without_credential(alice, db, fake_github):
+    c, org = alice["client"], alice["org"]
+    pid = make_project(c, org)
+    page = c.get(f"/o/{org}/projects/{pid}/repos/new?browse=1&owner=octo")
+    assert b"octo/shop" in page.data and b"octo/huge" not in page.data
+    page = c.get(f"/o/{org}/projects/{pid}/repos/new?browse=1")
+    assert b"Choose a GitHub credential" in page.data
+    page = c.get(f"/o/{org}/projects/{pid}/repos/new?browse=1&owner=../etc")
+    assert b"Owner must be" in page.data
+
+
+def test_browse_rejects_other_orgs_credential(alice, bob, db, fake_github):
+    bob["client"].post(f"/o/{bob['org']}/settings/integrations",
+                       data={"provider": "github", "label": "", "secret": "ghp_validtoken1234567890"})
+    bob_cred = db.session.execute(db.select(IntegrationCredential)).scalar_one()
+    pid = make_project(alice["client"], alice["org"])
+    page = alice["client"].get(f"/o/{alice['org']}/projects/{pid}/repos/new?browse=1&credential_id={bob_cred.id}")
+    assert b"Unknown credential" in page.data and b"octo/shop" not in page.data
+    alice["client"].post(f"/o/{alice['org']}/projects/{pid}/repos/new",
+                         data={"kind": "github_bulk", "credential_id": str(bob_cred.id), "repos": ["octo/shop"]})
+    assert db.session.scalar(db.select(db.func.count(Repository.id))) == 0
+
+
 # ---------------------------------------------------------------------------------------- queue behaviour
 def test_queued_audit_can_be_cancelled_and_worker_skips_it(tmp_path):
     """With a real (in-memory) broker the audit stays queued until a worker picks it up."""

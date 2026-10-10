@@ -42,6 +42,66 @@ def test_compatible_base_url_must_be_allow_listed(alice, db, app):
     assert s.enabled and s.base_url == "http://ollama:11434/v1"
 
 
+def test_model_picker_lists_provider_models_and_accepts_other(alice, db, app):
+    c, org = alice["client"], alice["org"]
+    page = c.get(f"/o/{org}/settings/integrations").data.decode()
+    assert '<option value="claude-sonnet-5-5"' in page and "data-ai-models" in page and "gpt-5-mini" in page
+    app.config["AI_ALLOWED_BASE_URLS"] = "http://ollama:11434/v1"
+    c.post(f"/o/{org}/settings/ai", data={"provider": "openai_compatible", "model": "", "model_custom": "phi4",
+                                         "base_url": "http://ollama:11434/v1"})
+    assert db.session.execute(db.select(AISettings)).scalar_one().model == "phi4"
+    page = c.get(f"/o/{org}/settings/integrations").data.decode()
+    assert 'value="phi4"' in page and '<option value="qwen2.5-coder:7b"' in page
+
+
+def test_models_endpoint_lists_models_for_the_selected_key(alice, db, monkeypatch):
+    c, org = alice["client"], alice["org"]
+    add_anthropic_key(c, org)
+    cred = db.session.execute(db.select(IntegrationCredential)).scalar_one()
+    seen = {}
+
+    def fake_list(name, *, api_key, base_url):
+        seen.update(name=name, api_key=api_key, base_url=base_url)
+        return ["claude-opus-5-5", "claude-haiku-5-5"]
+
+    monkeypatch.setattr("eval_app.ai_config.list_models", fake_list)
+    r = c.post(f"/o/{org}/settings/ai/models", data={"provider": "anthropic", "credential_id": str(cred.id)})
+    assert r.status_code == 200 and r.json == {"models": ["claude-opus-5-5", "claude-haiku-5-5"]}
+    assert seen == {"name": "anthropic", "api_key": "sk-ant-api03-" + "k" * 40, "base_url": ""}
+    # A key stored for another provider, or no key at all, is refused before any outbound call.
+    seen.clear()
+    r = c.post(f"/o/{org}/settings/ai/models", data={"provider": "openai", "credential_id": str(cred.id)})
+    assert r.status_code == 400 and "credential" in r.json["error"]
+    assert c.post(f"/o/{org}/settings/ai/models", data={"provider": "openai"}).status_code == 400
+    assert seen == {}
+
+
+def test_models_endpoint_guards_compatible_urls_and_reports_errors(alice, app, monkeypatch):
+    c, org = alice["client"], alice["org"]
+    calls = []
+
+    def fake_list(name, *, api_key, base_url):
+        calls.append(base_url)
+        raise AIError("Could not reach the AI provider.")
+
+    monkeypatch.setattr("eval_app.ai_config.list_models", fake_list)
+    r = c.post(f"/o/{org}/settings/ai/models",
+               data={"provider": "openai_compatible", "base_url": "http://169.254.169.254/latest"})
+    assert r.status_code == 400 and calls == []
+    app.config["AI_ALLOWED_BASE_URLS"] = "http://ollama:11434/v1"
+    r = c.post(f"/o/{org}/settings/ai/models",
+               data={"provider": "openai_compatible", "base_url": "http://ollama:11434/v1"})
+    assert r.status_code == 400 and r.json["error"] == "Could not reach the AI provider."
+    assert calls == ["http://ollama:11434/v1"]
+
+
+def test_models_endpoint_admin_only(app, alice):
+    m = app.test_client()
+    register(m, "member@example.com", "Member Org")
+    alice["client"].post(f"/o/{alice['org']}/members", data={"email": "member@example.com", "role": "member"})
+    assert m.post(f"/o/{alice['org']}/settings/ai/models", data={"provider": "anthropic"}).status_code == 403
+
+
 def test_credential_of_other_org_cannot_be_selected(alice, bob, db):
     add_anthropic_key(bob["client"], bob["org"])
     bob_cred = db.session.execute(db.select(IntegrationCredential)).scalar_one()

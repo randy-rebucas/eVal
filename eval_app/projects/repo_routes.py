@@ -12,6 +12,7 @@ from ..extensions import db
 from ..integrations.github import GitHubError
 from ..integrations.services import github_client, org_credentials
 from ..models import Audit, Project, Repository
+from ..security import ratelimit
 from ..security.tenancy import get_scoped_or_404, org_required, require_role
 from . import repositories as repo_service
 
@@ -21,6 +22,10 @@ bp = Blueprint("repos", __name__, url_prefix="/o/<org_slug>")
 class GitHubRepoForm(FlaskForm):
     full_name = StringField("Repository (owner/name)", validators=[DataRequired(), Length(max=200)])
     credential_id = SelectField("Credential", choices=[], validate_choice=False)
+
+
+class BulkConnectForm(FlaskForm):
+    """CSRF only; the selected ``repos`` and ``credential_id`` are read from the request and checked server-side."""
 
 
 class UploadRepoForm(FlaskForm):
@@ -53,6 +58,21 @@ def new(org_slug, project_id):
     up_form = UploadRepoForm(prefix="up")
     if request.method == "POST":
         kind = request.form.get("kind")
+        if kind == "github_bulk" and BulkConnectForm().validate_on_submit():
+            credential_id = request.form.get("credential_id") or None
+            if credential_id:
+                require_role("admin")
+            try:
+                added, errors = repo_service.add_github_repositories(
+                    g.org, project, request.form.getlist("repos"), credential_id)
+            except repo_service.RepositoryError as exc:
+                flash(str(exc), "danger")
+                return redirect(url_for("repos.new", org_slug=org_slug, project_id=project.id))
+            if added:
+                flash(f"Connected {len(added)} repositor{'y' if len(added) == 1 else 'ies'}.", "success")
+            for e in errors:
+                flash(e, "danger")
+            return redirect(url_for("projects.detail", org_slug=org_slug, project_id=project.id))
         if kind == "github" and gh_form.validate_on_submit():
             credential_id = gh_form.credential_id.data or None
             if credential_id:
@@ -76,7 +96,29 @@ def new(org_slug, project_id):
                 flash(str(exc), "danger")
             else:
                 return redirect(url_for("audits.detail", org_slug=org_slug, audit_id=audit.id))
-    return render_template("repos/new.html", project=project, gh_form=gh_form, up_form=up_form)
+    browse = _browse(project)
+    return render_template("repos/new.html", project=project, gh_form=gh_form, up_form=up_form,
+                           credential_choices=_credential_choices(), bulk_form=BulkConnectForm(), **browse)
+
+
+def _browse(project):
+    """Repository listing for ``?browse=1&credential_id=…&owner=…``; empty unless asked for."""
+    a = request.args
+    out = {"browse_cred": a.get("credential_id", ""), "browse_owner": a.get("owner", "").strip()[:100],
+           "gh_repos": None, "browse_error": None}
+    if not a.get("browse"):
+        return out
+    if out["browse_cred"] and g.membership.role not in ("admin", "owner"):
+        out["browse_error"] = "Only admins can browse with an organization credential."
+    elif not ratelimit.hit("gh-browse", str(g.org.id), 30, 300):
+        out["browse_error"] = "Too many GitHub lookups; try again in a few minutes."
+    else:
+        try:
+            out["gh_repos"] = repo_service.browse_github_repositories(
+                g.org, project, out["browse_cred"] or None, out["browse_owner"])
+        except repo_service.RepositoryError as exc:
+            out["browse_error"] = str(exc)
+    return out
 
 
 @bp.get("/repos/<repo_id>")

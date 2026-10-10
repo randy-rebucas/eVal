@@ -133,7 +133,9 @@ class IntegrationCredential(TenantMixin, TimestampMixin, db.Model):
     label: Mapped[str] = mapped_column(sa.String(120), nullable=False)
     encrypted_secret: Mapped[bytes] = mapped_column(sa.LargeBinary, nullable=False)
     last4: Mapped[str] = mapped_column(sa.String(4), nullable=False, default="")
-    created_by_id: Mapped[uuid.UUID | None] = mapped_column(sa.ForeignKey("users.id", ondelete="SET NULL"))
+    created_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
 
 
 class Repository(TenantMixin, TimestampMixin, db.Model):
@@ -148,7 +150,7 @@ class Repository(TenantMixin, TimestampMixin, db.Model):
     full_name: Mapped[str] = mapped_column(sa.String(200), nullable=False, default="")
     default_branch: Mapped[str] = mapped_column(sa.String(255), nullable=False, default="main")
     credential_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.ForeignKey("integration_credentials.id", ondelete="SET NULL")
+        sa.ForeignKey("integration_credentials.id", ondelete="SET NULL"), index=True
     )
 
     project: Mapped[Project] = relationship(back_populates="repositories")
@@ -170,7 +172,9 @@ class Upload(TenantMixin, TimestampMixin, db.Model):
     stored_path: Mapped[str] = mapped_column(sa.String(500), nullable=False)
     sha256: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     size_bytes: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
-    uploaded_by_id: Mapped[uuid.UUID | None] = mapped_column(sa.ForeignKey("users.id", ondelete="SET NULL"))
+    uploaded_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
 
 
 class Audit(TenantMixin, TimestampMixin, db.Model):
@@ -184,9 +188,15 @@ class Audit(TenantMixin, TimestampMixin, db.Model):
 
     organization_id: Mapped[uuid.UUID] = org_fk()
     repository_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("repositories.id", ondelete="CASCADE"))
-    upload_id: Mapped[uuid.UUID | None] = mapped_column(sa.ForeignKey("uploads.id", ondelete="SET NULL"))
-    previous_audit_id: Mapped[uuid.UUID | None] = mapped_column(sa.ForeignKey("audits.id", ondelete="SET NULL"))
-    requested_by_id: Mapped[uuid.UUID | None] = mapped_column(sa.ForeignKey("users.id", ondelete="SET NULL"))
+    upload_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.ForeignKey("uploads.id", ondelete="SET NULL"), index=True
+    )
+    previous_audit_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.ForeignKey("audits.id", ondelete="SET NULL"), index=True
+    )
+    requested_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
 
     branch: Mapped[str] = mapped_column(sa.String(255), nullable=False, default="")
     commit_sha: Mapped[str] = mapped_column(sa.String(64), nullable=False, default="")
@@ -321,7 +331,9 @@ class GitHubIssueLink(TenantMixin, TimestampMixin, db.Model):
     fingerprint: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     issue_number: Mapped[int] = mapped_column(sa.Integer, nullable=False)
     issue_url: Mapped[str] = mapped_column(sa.String(500), nullable=False)
-    created_by_id: Mapped[uuid.UUID | None] = mapped_column(sa.ForeignKey("users.id", ondelete="SET NULL"))
+    created_by_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
 
 
 class AISettings(TenantMixin, TimestampMixin, db.Model):
@@ -335,7 +347,7 @@ class AISettings(TenantMixin, TimestampMixin, db.Model):
     base_url: Mapped[str] = mapped_column(sa.String(300), nullable=False, default="")
     max_findings: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=15)
     credential_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.ForeignKey("integration_credentials.id", ondelete="SET NULL")
+        sa.ForeignKey("integration_credentials.id", ondelete="SET NULL"), index=True
     )
 
     credential: Mapped[IntegrationCredential | None] = relationship()
@@ -363,7 +375,9 @@ class AuditEvent(TenantMixin, db.Model):
     organization_id: Mapped[uuid.UUID | None] = mapped_column(
         sa.ForeignKey("organizations.id", ondelete="CASCADE"), index=True
     )
-    actor_id: Mapped[uuid.UUID | None] = mapped_column(sa.ForeignKey("users.id", ondelete="SET NULL"))
+    actor_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.ForeignKey("users.id", ondelete="SET NULL"), index=True
+    )
     action: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     target_type: Mapped[str] = mapped_column(sa.String(40), nullable=False, default="")
     target_id: Mapped[str] = mapped_column(sa.String(64), nullable=False, default="")
