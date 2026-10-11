@@ -62,6 +62,8 @@ eval_engine/
     db_migrations.py Migration parsing: SQL, Alembic, Django, knex, Sequelize → operations
     db_checks.py     Schema and migration checks, engine-aware
     db_queries.py    Query checks: N+1, pagination, indexes, transactions, races
+    api_design.py    API design checks: input validation, status codes, idempotency, versioning, error format
+                     (used by api_security.py)
   ai/
     base.py          AIProvider protocol, AIRequest/AIResponse
     anthropic_provider.py, openai_provider.py   official SDKs; OpenAI-compatible local endpoints via base_url
