@@ -40,8 +40,10 @@ JS_STRING_OR_COMMENT = re.compile(r"//[^\n]*|/\*.*?\*/|'(?:\\.|[^'\\\n])*'|\"(?:
 JS_BODY_LIMIT = re.compile(r"""\blimit\s*:\s*['"](\d+(?:\.\d+)?)\s*(mb|gb)['"]""", re.I)
 FASTIFY_BODY_LIMIT = re.compile(r"\bbodyLimit\s*:\s*([\d_]+(?:\s*\*\s*[\d_]+)*)")
 LARGE_BODY_MB = 10
-BLOCKING_IN_ASYNC = {"time.sleep", "requests.get", "requests.post", "requests.put", "requests.delete",
-                     "requests.request", "urllib.request.urlopen", "subprocess.run", "subprocess.call"}
+BLOCKING_IN_ASYNC = {"time.sleep", "requests.get", "requests.post", "requests.put", "requests.patch",
+                     "requests.delete", "requests.head", "requests.request", "httpx.get", "httpx.post", "httpx.put",
+                     "httpx.patch", "httpx.delete", "httpx.request", "urllib.request.urlopen", "subprocess.run",
+                     "subprocess.call", "subprocess.check_output", "subprocess.check_call", "os.system"}
 # Names that suggest data, not configuration: module-level containers with these names written by request handlers.
 STATE_NAME = re.compile(r"(?i)(cache|session|store|state|users|items|data|db|records|counter|count|queue|jobs|tokens|"
                         r"carts?|orders|visits|memory|registry|buffer|pending|seen|results|messages|rooms|clients)")
@@ -66,6 +68,17 @@ def _is_route(func: ast.AST) -> bool:
     return any(isinstance(d, ast.Call) and isinstance(d.func, ast.Attribute)
                and d.func.attr in {"route", "get", "post", "put", "patch", "delete"}
                for d in getattr(func, "decorator_list", []))
+
+
+def _own_nodes(func: ast.AST):
+    """Nodes of ``func`` outside nested functions, lambdas and classes: those run elsewhere (an executor thread, a
+    callback) or are checked on their own."""
+    stack = list(ast.iter_child_nodes(func))
+    while stack:
+        node = stack.pop()
+        yield node
+        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda | ast.ClassDef):
+            stack.extend(ast.iter_child_nodes(node))
 
 
 def _names(node: ast.AST | None) -> set[str]:
@@ -423,17 +436,23 @@ class PerformanceAnalyzer(Analyzer):
             if isinstance(node, ast.Call):
                 name = _call_name(node)
                 root, _, attr = name.rpartition(".")
+                # `**kwargs` may carry the timeout; it cannot be seen statically.
                 if root in ("requests", "httpx") and attr in HTTP_FUNCS and not any(
-                        k.arg == "timeout" for k in node.keywords):
+                        k.arg in ("timeout", None) for k in node.keywords):
+                    httpx = root == "httpx"
                     out.append(self._f(ctx, "performance.http-without-timeout", f"{name}() without a timeout",
-                                       Severity.MEDIUM, Confidence.HIGH, FindingKind.CONFIRMED,
-                                       "Outbound HTTP calls without a timeout can hang a worker indefinitely when "
-                                       "the remote end stalls, exhausting the pool under load."
-                                       + (" (httpx has a 5s default; set it explicitly.)" if root == "httpx" else ""),
+                                       Severity.LOW if httpx else Severity.MEDIUM,
+                                       Confidence.MEDIUM if httpx else Confidence.HIGH,
+                                       FindingKind.POTENTIAL if httpx else FindingKind.CONFIRMED,
+                                       "httpx applies a 5-second default timeout, which may be too long or too short "
+                                       "for this call; set it explicitly so the limit is a deliberate choice."
+                                       if httpx else
+                                       "requests has no default timeout: an outbound call can hang a worker "
+                                       "indefinitely when the remote end stalls, exhausting the pool under load.",
                                        "Pass an explicit timeout (connect, read) and handle timeouts.",
                                        rel, node.lineno))
             if isinstance(node, ast.AsyncFunctionDef):
-                for inner in ast.walk(node):
+                for inner in _own_nodes(node):
                     if isinstance(inner, ast.Call) and _call_name(inner) in BLOCKING_IN_ASYNC:
                         out.append(self._f(ctx, "performance.blocking-call-in-async", f"Blocking call "
                                            f"{_call_name(inner)}() inside async function", Severity.MEDIUM,

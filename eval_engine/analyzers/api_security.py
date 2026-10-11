@@ -17,8 +17,11 @@ from .registry import register
 
 ROUTE_METHODS = {"route", "get", "post", "put", "patch", "delete", "api_route"}
 MUTATING = {"POST", "PUT", "PATCH", "DELETE"}
-AUTH_DECORATOR = re.compile(r"(?i)(login|auth|jwt|token|permission|role|admin|scope|org_required|require|protect"
-                            r"|current_user|verify|guard|access)")
+# Names that say "authenticate/authorize the caller". Not bare "require"/"verify"/"access": require_POST,
+# require_json, verify_signature_format and log_access say nothing about who the caller is.
+AUTH_DECORATOR = re.compile(r"(?i)(login|auth|jwt|token|permission|role|admin|scope|org_required|protect|current_user"
+                            r"|guard|api_?key|access_required|has_access|requires?_(?:user|session|member|staff|"
+                            r"superuser|account)|verify_(?:user|session|credentials|identity))")
 PUBLIC_NAMES = re.compile(r"(?i)(login|logout|register|signup|sign_up|health|ready|live|webhook|callback|reset|"
                           r"forgot|verify_email|static|index|home|public|oauth|ping|metrics|csp_report)")
 JS_ROUTE = re.compile(r"""\b(?:app|router|server)\.(post|put|patch|delete)\(\s*["'`]([^"'`]+)["'`]\s*,\s*(.*)$""")
@@ -26,7 +29,12 @@ REQUEST_BODY = re.compile(r"request\.(json|form|args|values|get_json\(\))|await 
 JS_AUTH_HINT = re.compile(r"(?i)(auth|jwt|passport|session|requireUser|isAuthenticated|protect|guard|verify)")
 JS_ANY_ROUTE = re.compile(r"""\b(?:app|router|server)\.(get|post|put|patch|delete|all)\(\s*["'`]([^"'`]+)["'`]"""
                           r"""\s*,(.*)$""")
-JS_GLOBAL_AUTH = re.compile(r"(?i)\.use\([^)]*(auth|jwt|passport|requireUser|isAuthenticated|protect|guard)")
+# `app.use(passport.authenticate(...))`, `router.use(requireAuth)`, `app.use('/api', authenticate, api)` — middleware,
+# not a mount path (`'/auth'`) or a router named after auth (`app.use('/auth', authRouter)`).
+JS_GLOBAL_AUTH = re.compile(r"\.use\(\s*(?:[\"'`][^\"'`]*[\"'`]\s*,\s*)?(?:[\w.$]+\s*,\s*)*"
+                            r"(?![\w$]*(?:Router|Routes|router|routes)\b)[\w.$]*"
+                            r"(?:auth|Auth|jwt|Jwt|JWT|passport|requireUser|isAuthenticated|protect|guard|Guard)"
+                            r"[\w.$]*\s*[(,)]")
 JS_ERROR_MIDDLEWARE = re.compile(r"\(\s*(?:err|error|e)\s*(?::\s*\w+)?\s*,\s*req\w*\s*(?::\s*\w+)?\s*,\s*res\w*\s*"
                                  r"(?::\s*\w+)?\s*,\s*next\w*|setErrorHandler\(")
 JS_ERROR_LEAK = re.compile(r"\bres\.(?:status\(\s*\d+\s*\)\.)?(?:send|json|end|write)\([^;]*"
@@ -46,6 +54,8 @@ JS_OWNERSHIP = re.compile(r"(?i)(req\.user|req\.auth|res\.locals\.(user|session)
 OBJECT_AUTHZ_DECORATOR = re.compile(r"(?i)(permission|owner|role|admin|policy|authoriz|access|scope|org_required|"
                                     r"tenant|member)")
 PATH_PARAM = re.compile(r"<(?:[^:<>]+:)?(\w+)>|\{(\w+)(?::[^}]*)?\}|:(\w+)")
+TLS_CALLS = {"get", "post", "put", "patch", "delete", "head", "options", "request", "send", "stream", "Client",
+             "AsyncClient", "ws_connect"}
 RESPONSE_CALLS = {"jsonify", "JSONResponse", "make_response", "Response", "HTTPException", "abort", "HttpResponse",
                   "JsonResponse", "PlainTextResponse", "HTMLResponse"}
 BROAD_CATCH = {"", "Exception", "BaseException"}
@@ -99,6 +109,10 @@ def _is_false(node) -> bool:
     return isinstance(node, ast.Constant) and node.value is False
 
 
+def _is_true(node) -> bool:
+    return isinstance(node, ast.Constant) and node.value is True
+
+
 def _config_key(target) -> str:
     """``SESSION_COOKIE_SECURE`` from ``X = ...``, ``app.config["X"] = ...`` or ``settings.X = ...``."""
     if isinstance(target, ast.Subscript) and isinstance(target.slice, ast.Constant):
@@ -131,8 +145,12 @@ def _logged_secret(args) -> str | None:
             if MASKING_CALL.search(callee.split(".")[-1]):
                 continue  # mask(token), len(password), hash(...)
             if callee.endswith(".get") and node.args and isinstance(node.args[0], ast.Constant) \
-                    and isinstance(node.args[0].value, str) and _sensitive_name(node.args[0].value):
-                return ast.unparse(node)  # request.headers.get("Authorization"), data.get("password")
+                    and isinstance(node.args[0].value, str):
+                if _sensitive_name(node.args[0].value):
+                    return ast.unparse(node)  # request.headers.get("Authorization"), data.get("password")
+                # headers.get("User-Agent"): the key decides; the container it is read from is not logged.
+                stack.extend([*node.args[1:], *(k.value for k in node.keywords)])
+                continue
         elif isinstance(node, ast.Name):
             label = node.id
         elif isinstance(node, ast.Attribute):
@@ -184,7 +202,8 @@ def _route_info(dec: ast.AST) -> tuple[str, set[str]] | None:
     if not (isinstance(dec, ast.Call) and isinstance(dec.func, ast.Attribute) and dec.func.attr in ROUTE_METHODS):
         return None
     path = dec.args[0].value if dec.args and isinstance(dec.args[0], ast.Constant) else "?"
-    if not isinstance(path, str) or not path.startswith("/") and path != "?":
+    # "" is the router's own prefix (`@router.post("")` under APIRouter(prefix="/orders")).
+    if not isinstance(path, str) or (path not in ("", "?") and not path.startswith("/")):
         return None
     if dec.func.attr in ("route", "api_route"):
         methods = {"GET"}
@@ -195,6 +214,22 @@ def _route_info(dec: ast.AST) -> tuple[str, set[str]] | None:
     else:
         methods = {dec.func.attr.upper()}
     return path, methods
+
+
+BEFORE_REQUEST_AUTH = re.compile(r"(?i)current_user|abort\(\s*40[13]|login|auth|token|\b40[13]\b|unauthori")
+
+
+def _before_request_guard(tree: ast.Module) -> bool:
+    """A ``before_request`` hook (decorator or ``bp.before_request(fn)``) that itself checks the caller.
+
+    A hook that only opens a database session or logs does not protect the routes, even if the module mentions
+    tokens elsewhere."""
+    funcs = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)}
+    hooks = [f for f in funcs.values() if any(_decorator_name(d).endswith("before_request") for d in f.decorator_list)]
+    hooks += [funcs[a.id] for n in ast.walk(tree) if isinstance(n, ast.Call)
+              and _decorator_name(n).endswith(".before_request") for a in n.args
+              if isinstance(a, ast.Name) and a.id in funcs]
+    return any(BEFORE_REQUEST_AUTH.search(ast.unparse(f)) for f in hooks)
 
 
 def _fastapi_protected(func: ast.FunctionDef | ast.AsyncFunctionDef, dec: ast.Call) -> bool:
@@ -238,8 +273,7 @@ class APISecurityAnalyzer(Analyzer):
             if re.search(r"(?i)(login_required|jwt_required|LoginManager|HTTPBearer|OAuth2PasswordBearer|"
                          r"permission_required|auth_required|@\w*auth)", text):
                 auth_seen = True
-            file_guard = bool(re.search(r"\.before_request\b", text)) and bool(
-                re.search(r"(?i)(current_user|abort\(\s*40[13]|login|auth|token)", text))
+            file_guard = _before_request_guard(tree)
             findings.extend(self._python_file(ctx, rel, tree, text))
             if re.search(r"\.(errorhandler|register_error_handler|exception_handler|add_exception_handler)\b", text):
                 error_handler_seen = True
@@ -278,10 +312,15 @@ class APISecurityAnalyzer(Analyzer):
             findings.extend(self._js_idor(ctx, rel))
             if JS_ERROR_MIDDLEWARE.search(text):
                 error_handler_seen = True
+            # `app.use(passport.authenticate(...))` protects every route registered after it in this file.
+            global_auth = JS_GLOBAL_AUTH.search(text)
+            global_line = text.count("\n", 0, global_auth.start()) + 1 if global_auth else None
             for i, line in enumerate(ctx.lines(rel), start=1):
                 if JS_ANY_ROUTE.search(line):
                     route_count += 1
                 m = JS_ROUTE.search(line)
+                if global_line is not None and i > global_line:
+                    continue
                 if m and not JS_AUTH_HINT.search(m.group(3)) and not PUBLIC_NAMES.search(m.group(2)):
                     unprotected.append((rel, i, f"{m.group(1).upper()} {m.group(2)}", m.group(2)))
 
@@ -369,6 +408,14 @@ class APISecurityAnalyzer(Analyzer):
                     wildcard = origins is None or "'*'" in ast.unparse(origins) or '"*"' in ast.unparse(origins)
                     if wildcard:
                         out.append(self._cors(ctx, rel, node.lineno, creds))
+                # Starlette/FastAPI: app.add_middleware(CORSMiddleware, ...) or Middleware(CORSMiddleware, ...).
+                if node.args and _decorator_name(node.args[0]).split(".")[-1] == "CORSMiddleware":
+                    origins, regex = kws.get("allow_origins"), kws.get("allow_origin_regex")
+                    wildcard = (isinstance(origins, ast.List | ast.Tuple | ast.Set) and any(
+                        isinstance(e, ast.Constant) and e.value == "*" for e in origins.elts)) or (
+                        isinstance(regex, ast.Constant) and regex.value in (".*", ".+", "^.*$", "https?://.*"))
+                    if wildcard:
+                        out.append(self._cors(ctx, rel, node.lineno, _is_true(kws.get("allow_credentials"))))
                 if name.endswith("set_cookie"):
                     out.extend(self._py_set_cookie(ctx, rel, node, kws))
                 for kw in node.keywords:  # app.config.update(SESSION_COOKIE_SECURE=False)
@@ -381,9 +428,12 @@ class APISecurityAnalyzer(Analyzer):
                                             else node.args) or _logged_secret(k.value for k in node.keywords)
                     if leaked and len([f for f in out if f.rule_id.endswith("sensitive-data-logged")]) < 20:
                         out.append(self._sensitive_log(ctx, rel, node.lineno, leaked))
-                if name.endswith(("requests.get", "requests.post", "requests.put", "requests.patch",
-                                  "requests.delete", "requests.request", "httpx.get", "httpx.post")) and isinstance(
-                        kws.get("verify"), ast.Constant) and kws["verify"].value is False:
+                # requests/httpx calls and clients (`session.get(..., verify=False)`, `httpx.Client(verify=False)`),
+                # aiohttp `ssl=False`, and ssl._create_unverified_context().
+                last = name.split(".")[-1]
+                if (_is_false(kws.get("verify")) and last in TLS_CALLS) or (
+                        _is_false(kws.get("ssl")) and last in TLS_CALLS | {"TCPConnector"}) or \
+                        last == "_create_unverified_context":
                     out.append(self._f(ctx, "api.tls-verify-disabled", "TLS certificate verification disabled",
                                        Severity.HIGH, Confidence.HIGH, FindingKind.CONFIRMED,
                                        "verify=False accepts any certificate, enabling man-in-the-middle attacks.",
@@ -419,6 +469,10 @@ class APISecurityAnalyzer(Analyzer):
                 if cookie_key in COOKIE_FLAG_KEYS and _is_false(value) and dev_only is not None \
                         and id(node) not in dev_only:
                     out.append(self._cookie_setting(ctx, rel, node.lineno, cookie_key))
+                if target in ("CORS_ALLOW_ALL_ORIGINS", "CORS_ORIGIN_ALLOW_ALL") and _is_true(value) and (
+                        dev_only is not None and id(node) not in dev_only):  # django-cors-headers
+                    out.append(self._cors(ctx, rel, node.lineno,
+                                          bool(re.search(r"(?m)^\s*CORS_ALLOW_CREDENTIALS\s*=\s*True", text))))
                 if target == "ALLOWED_HOSTS" and "'*'" in ast.unparse(value):
                     out.append(self._f(ctx, "api.django-allowed-hosts-wildcard", "ALLOWED_HOSTS allows any host",
                                        Severity.MEDIUM, Confidence.HIGH, FindingKind.CONFIRMED,
@@ -703,7 +757,7 @@ class APISecurityAnalyzer(Analyzer):
                                    Severity.CRITICAL, Confidence.HIGH, FindingKind.CONFIRMED,
                                    "Accepting alg=none lets anyone forge tokens.", "Allow-list signing algorithms.",
                                    rel, i, Category.SECURITY))
-            if re.search(r"\bcors\(\s*\)", line) or re.search(r"origin\s*:\s*(['\"]\*['\"]|true)\b", line):
+            if re.search(r"\bcors\(\s*\)", line) or re.search(r"origin\s*:\s*(?:['\"`]\*['\"`]|true\b)", line):
                 creds = "credentials: true" in text or "credentials:true" in text
                 out.append(self._cors(ctx, rel, i, creds))
             if re.search(r"\b(?:create|update|insert|new\s+\w+|findOneAndUpdate|updateOne)\(\s*req\.body\s*[,)]", line):

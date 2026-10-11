@@ -293,6 +293,12 @@ class _Collector:
                 continue
             is_handler = id(func) in handlers
             status_set = bool(PY_STATUS_SET.search(ast.unparse(func)))
+            # `resp = jsonify(...)` … `return resp, 400`: the status travels with the variable, not the call.
+            bound = {id(n.value): n.targets[0].id for n in ast.walk(func) if isinstance(n, ast.Assign)
+                     and len(n.targets) == 1 and isinstance(n.targets[0], ast.Name)}
+            returned_status = {n.value.elts[0].id: _status(n.value.elts[1]) for n in ast.walk(func)
+                               if isinstance(n, ast.Return) and isinstance(n.value, ast.Tuple)
+                               and len(n.value.elts) > 1 and isinstance(n.value.elts[0], ast.Name)}
             seen: set[int] = set()
             for node in ast.walk(func):
                 if isinstance(node, ast.Return) and node.value is not None:
@@ -308,6 +314,8 @@ class _Collector:
                 entries, status = _py_response(expr, is_handler and isinstance(node, ast.Return))
                 if entries is None:
                     continue
+                if status is None and bound.get(id(expr)) in returned_status:
+                    status = returned_status[bound[id(expr)]]
                 failed = _is_error(entries)
                 if failed or (isinstance(status, int) and status >= 400):
                     shape = _shape(entries)

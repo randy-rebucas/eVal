@@ -54,6 +54,11 @@ _CONF_RANK = {Confidence.LOW: 0, Confidence.MEDIUM: 1, Confidence.HIGH: 2}
 def family_of(rule_id: str) -> str | None:
     if rule_id in RULE_FAMILIES:
         return RULE_FAMILIES[rule_id]
+    # Provider-format secrets: eVal and Trivy name the same key differently (secrets.aws-access-key vs
+    # secret-aws-access-key-id); on one line they are one leaked credential.
+    if rule_id.startswith("trivy:secret-") or (rule_id.startswith("eval:secrets.")
+                                               and rule_id != "eval:secrets.env-file-committed"):
+        return "hardcoded-secret"
     if rule_id.startswith("semgrep:"):
         lowered = rule_id.lower()
         for needle, fam in (("sql", "sql-injection"), ("subprocess-shell", "shell-injection"),

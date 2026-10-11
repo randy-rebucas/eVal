@@ -29,8 +29,10 @@ JS_LOCKS = ("package-lock.json", "yarn.lock", "pnpm-lock.yaml", "npm-shrinkwrap.
 PY_LOCKS = ("poetry.lock", "Pipfile.lock", "uv.lock", "pdm.lock")
 OSV_URL = "https://api.osv.dev/v1/querybatch"
 OSV_VULN_URL = "https://api.osv.dev/v1/vulns/"
-MAX_OSV_PACKAGES = 1000
-MAX_OSV_DETAILS = 200
+OSV_BATCH = 1000  # /v1/querybatch accepts at most 1,000 queries per request
+MAX_OSV_PACKAGES = 20000
+MAX_OSV_DETAILS = 500
+OSV_DETAIL_WORKERS = 8
 MIN_SOURCE_FILES_FOR_UNUSED = 3
 MAX_CORPUS_FILES = 4000
 CORPUS_SUFFIXES = (".py", ".pyi", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".vue", ".svelte", ".astro", ".json",
@@ -562,23 +564,27 @@ class OSVAnalyzer(Analyzer):
         import requests
 
         http = session or requests
+        unchecked = packages[MAX_OSV_PACKAGES:]
         packages = packages[:MAX_OSV_PACKAGES]
-        payload = {"queries": [{"package": {"ecosystem": eco, "name": name}, "version": ver}
-                               for eco, name, ver, _src in packages]}
-        try:
-            resp = http.post(OSV_URL, json=payload, timeout=(5, 30))
-            resp.raise_for_status()
-            results = resp.json().get("results", [])
-        except (requests.RequestException, ValueError) as exc:
-            raise AnalyzerError("OSV.dev could not be reached (dependency vulnerabilities not checked)") from exc
+        results: list = []
+        for start in range(0, len(packages), OSV_BATCH):  # large lockfiles need several batches
+            chunk = packages[start:start + OSV_BATCH]
+            payload = {"queries": [{"package": {"ecosystem": eco, "name": name}, "version": ver}
+                                   for eco, name, ver, _src in chunk]}
+            try:
+                resp = http.post(OSV_URL, json=payload, timeout=(5, 30))
+                resp.raise_for_status()
+                batch = resp.json().get("results", [])
+            except (requests.RequestException, ValueError) as exc:
+                raise AnalyzerError("OSV.dev could not be reached (dependency vulnerabilities not checked)") from exc
+            results += list(batch[:len(chunk)]) + [{}] * (len(chunk) - len(batch))  # keep results aligned
+        vids = list(dict.fromkeys(v.get("id", "") for res in results for v in (res or {}).get("vulns", [])[:50]))
+        details = self._all_details(http, vids[:MAX_OSV_DETAILS], deadline=max(ctx.timeout - 15, 15))
         findings = []
-        details: dict[str, dict] = {}
         for (eco, name, ver, src), res in zip(packages, results, strict=False):
             for v in (res or {}).get("vulns", [])[:50]:
                 vid = v.get("id", "")
-                if vid not in details:
-                    details[vid] = self._details(http, vid) if len(details) < MAX_OSV_DETAILS else {}
-                d = details[vid]
+                d = details.get(vid, {})
                 display_id = next((a for a in d.get("aliases", []) if a.startswith("CVE-")), vid)
                 findings.append(self.finding(
                     ctx, rule=f"vuln:{display_id}", title=vuln_title(name, ver, display_id),
@@ -589,7 +595,29 @@ class OSVAnalyzer(Analyzer):
                     remediation=_fix_text(d, name),
                     file_path=src, evidence=f"{name}=={ver} pinned in {src}",
                     references=[f"https://osv.dev/vulnerability/{vid}"]))
+        if unchecked:
+            findings.append(self.finding(
+                ctx, rule="dependencies.osv-incomplete", title=f"{len(unchecked)} pinned packages were not checked "
+                "against OSV.dev", category=Category.DEPENDENCIES, severity=Severity.INFO, confidence=Confidence.HIGH,
+                kind=FindingKind.CONFIRMED,
+                description=f"The lockfiles pin {len(packages) + len(unchecked)} packages; only the first "
+                f"{len(packages)} were queried, so known vulnerabilities in the rest are not reported.",
+                remediation="Run a full scan with Trivy (pre-seeded EVAL_TRIVY_CACHE_DIR) or `osv-scanner` for "
+                "complete coverage.", file_path=unchecked[0][3]))
         return findings
+
+    def _all_details(self, http, vids: list[str], deadline: float) -> dict[str, dict]:
+        """Vulnerability records fetched concurrently; whatever is not back within ``deadline`` seconds is left
+        out (those findings fall back to the id and a medium severity)."""
+        from concurrent.futures import ThreadPoolExecutor, wait
+
+        if not vids:
+            return {}
+        pool = ThreadPoolExecutor(max_workers=OSV_DETAIL_WORKERS, thread_name_prefix="osv")
+        futures = {pool.submit(self._details, http, vid): vid for vid in vids}
+        done, _ = wait(futures, timeout=deadline)
+        pool.shutdown(wait=False, cancel_futures=True)
+        return {futures[f]: f.result() for f in done}
 
     @staticmethod
     def _details(http, vid: str) -> dict:
@@ -603,10 +631,44 @@ class OSVAnalyzer(Analyzer):
 
 
 def _severity(d: dict) -> Severity:
+    """GitHub advisories carry a severity label; other OSV sources (PYSEC, RUSTSEC, …) only a CVSS vector."""
     label = str((d.get("database_specific") or {}).get("severity", "")).upper()
     mapping = {"CRITICAL": Severity.CRITICAL, "HIGH": Severity.HIGH, "MODERATE": Severity.MEDIUM,
                "MEDIUM": Severity.MEDIUM, "LOW": Severity.LOW}
-    return mapping.get(label, Severity.MEDIUM)
+    if label in mapping:
+        return mapping[label]
+    scores = [s for entry in d.get("severity") or [] if isinstance(entry, dict)
+              and (s := cvss3_base_score(str(entry.get("score", "")))) is not None]
+    if not scores:
+        return Severity.MEDIUM
+    score = max(scores)
+    return (Severity.CRITICAL if score >= 9 else Severity.HIGH if score >= 7 else Severity.MEDIUM if score >= 4
+            else Severity.LOW)
+
+
+_CVSS3 = {"AV": {"N": 0.85, "A": 0.62, "L": 0.55, "P": 0.2}, "AC": {"L": 0.77, "H": 0.44},
+          "UI": {"N": 0.85, "R": 0.62}, "CIA": {"H": 0.56, "L": 0.22, "N": 0.0}}
+
+
+def cvss3_base_score(vector: str) -> float | None:
+    """CVSS v3.0/3.1 base score from a vector string (``CVSS:3.1/AV:N/AC:L/…``); None for other formats."""
+    import math
+
+    if not vector.startswith("CVSS:3."):
+        return None
+    m = dict(part.split(":", 1) for part in vector.split("/")[1:] if ":" in part)
+    try:
+        changed = m["S"] == "C"
+        pr = {"N": 0.85, "L": 0.68 if changed else 0.62, "H": 0.5 if changed else 0.27}[m["PR"]]
+        exploitability = 8.22 * _CVSS3["AV"][m["AV"]] * _CVSS3["AC"][m["AC"]] * pr * _CVSS3["UI"][m["UI"]]
+        iss = 1 - math.prod(1 - _CVSS3["CIA"][m[k]] for k in ("C", "I", "A"))
+    except KeyError:
+        return None
+    impact = 7.52 * (iss - 0.029) - 3.25 * (iss - 0.02) ** 15 if changed else 6.42 * iss
+    if impact <= 0:
+        return 0.0
+    total = min((1.08 if changed else 1.0) * (impact + exploitability), 10.0)
+    return math.ceil(round(total * 100000) / 10000) / 10  # the specification's "round up" to one decimal
 
 
 def _fix_text(d: dict, name: str) -> str:

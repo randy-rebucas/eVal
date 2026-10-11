@@ -20,6 +20,7 @@ CI_MARKERS = (".github/workflows/", ".gitlab-ci.yml", "Jenkinsfile", ".circleci/
 DB_PORTS = {"5432", "3306", "6379", "27017", "9200", "11211", "5672", "1433"}
 SECRET_ENV = re.compile(r"(?i)^\s*(?:ENV|ARG)\s+\w*(PASSWORD|SECRET|TOKEN|API_?KEY|PRIVATE_KEY)\w*[ =]\s*\S+")
 ACTION_USES = re.compile(r"^\s*-?\s*uses:\s*([^@\s]+)@([^\s#]+)")
+SCRIPT_KEY = re.compile(r"^\s*(?:-\s+)?(run|script)\s*:(.*)$")  # shell steps, actions/github-script
 UNTRUSTED_CONTEXT = re.compile(
     r"\$\{\{\s*github\.event\.(?:issue\.title|issue\.body|pull_request\.title|pull_request\.body|comment\.body|"
     r"review\.body|review_comment\.body|pages\.[^}]*\.page_name|commits\.[^}]*\.message|head_commit\.message|"
@@ -128,6 +129,7 @@ class DevOpsAnalyzer(Analyzer):
         stage_starts = [i for i, ln in enumerate(lines) if ln.strip().upper().startswith("FROM ")]
         last_stage = stage_starts[-1] if stage_starts else 0
         has_healthcheck = False
+        stages: set[str] = set()  # `FROM image AS name`: later `FROM name` builds on that stage, not a registry image
         for i, raw in enumerate(lines, start=1):
             line = raw.strip()
             upper = line.upper()
@@ -136,8 +138,12 @@ class DevOpsAnalyzer(Analyzer):
             if upper.startswith("HEALTHCHECK"):
                 has_healthcheck = True
             if upper.startswith("FROM "):
-                image = line.split()[1] if len(line.split()) > 1 else ""
-                if image.lower() != "scratch" and "$" not in image and "@sha256:" not in image:
+                words = [w for w in line.split()[1:] if not w.startswith("--")]  # --platform=…
+                image = words[0] if words else ""
+                registry_image = image.lower() not in stages
+                if len(words) >= 3 and words[1].upper() == "AS":
+                    stages.add(words[2].lower())
+                if registry_image and image.lower() != "scratch" and "$" not in image and "@sha256:" not in image:
                     tag = image.rsplit("/", 1)[-1]
                     if ":" not in tag or tag.endswith(":latest"):
                         out.append(self._repo(ctx, "devops.dockerfile-unpinned-base", "Base image is not pinned",
@@ -145,7 +151,8 @@ class DevOpsAnalyzer(Analyzer):
                                               f"`{image}` resolves to whatever 'latest' is at build time, making "
                                               "builds non-reproducible and silently pulling breaking changes.",
                                               "Pin a specific version tag (ideally also the digest).", path, i))
-            if SECRET_ENV.match(raw):
+            # `ENV DB_PASSWORD_FILE=/run/secrets/db` points at a mounted secret instead of holding one.
+            if SECRET_ENV.match(raw) and not re.search(r"(?i)^\s*(?:ENV|ARG)\s+\w*_(?:FILE|PATH|DIR)\b", raw):
                 out.append(self._repo(ctx, "devops.dockerfile-secret-in-env", "Secret baked into image via ENV/ARG",
                                       Severity.HIGH, Confidence.MEDIUM, FindingKind.CONFIRMED,
                                       "Values set with ENV/ARG are stored in image layers and visible to anyone "
@@ -237,8 +244,19 @@ class DevOpsAnalyzer(Analyzer):
                                   path))
         unpinned = 0
         first = None
+        script_indent = None  # indent of a `run:`/`script:` key whose block scalar (| or >) is open
         for i, ln in enumerate(lines, start=1):
-            if UNTRUSTED_CONTEXT.search(ln):
+            indent = len(ln) - len(ln.lstrip())
+            if script_indent is not None and ln.strip() and indent <= script_indent:
+                script_indent = None
+            executes = script_indent is not None
+            if key := SCRIPT_KEY.match(ln):
+                if re.fullmatch(r"[|>][-+]?\s*(?:#.*)?", key.group(2).strip()):
+                    script_indent = key.start(1)
+                else:
+                    executes = True
+            # Only where the value is executed: `env:` / `with:` inputs are the safe way to pass event data.
+            if executes and UNTRUSTED_CONTEXT.search(ln):
                 out.append(self._repo(ctx, "devops.gha-script-injection", "Untrusted event data interpolated into "
                                       "a workflow", Severity.HIGH, Confidence.MEDIUM, FindingKind.CONFIRMED,
                                       "Attacker-controlled fields (titles, bodies, branch names) expanded with "
