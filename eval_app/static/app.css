@@ -491,6 +491,13 @@ a.rail-step:hover, .rail-all:hover { background: var(--panel-2); color: var(--fg
 .diff .d-del { color: var(--crit); background: var(--crit-wash); }
 .diff .d-ctx { color: var(--fg-2); }
 
+/* Sandbox terminal: xterm.js inside the terminal chrome. */
+.sbx .term-bar { gap: .75rem; }
+.sbx-status { flex: none; font-size: .7rem; color: var(--term-dim); }
+.sbx-screen { height: min(70vh, 40rem); padding: .5rem; background: var(--term-bg); }
+.sbx-screen .xterm { height: 100%; }
+@media (max-width: 600px) { .sbx-screen { height: 60vh; padding: .25rem; } }
+
 /* Fix editor: a textarea per file with a line-number gutter. Without JS the files stack with their paths as labels. */
 .ed-tabs { display: flex; overflow-x: auto; border-bottom: 1px solid var(--line); background: var(--panel-2); }
 .ed-tab {

@@ -241,6 +241,11 @@ VS Code with a terminal, running on GitHub's machines (github.com repositories).
 **eVal: Apply Fix Proposal** in the [VS Code extension](ide/vscode/README.md) applies the fix after showing each change.
 The terminal never runs on eVal's servers.
 
+Self-hosted deployments can instead offer an **opt-in sandbox terminal** on each fix. It is an isolated container
+(gVisor, no network, no credentials) with the audited commit and the fix applied, and edits made there can be saved
+back as a re-audited fix revision. It is off unless the operator runs the sandbox service and an organization admin
+enables it. See [docs/SANDBOX.md](docs/SANDBOX.md).
+
 ## Configuration
 
 All configuration is via environment variables (`.env.example` documents each). Key ones:

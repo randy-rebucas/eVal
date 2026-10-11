@@ -100,7 +100,8 @@ CORS headers. Set `EVAL_API_CORS_ORIGINS=` (empty) to disable.
 
 ## 6. Outbound actions
 
-eVal never executes audited code and never writes to a repository on its own. GitHub issues, PR comments and
+Audits never execute audited code (the opt-in sandbox terminal, § 6b, runs what a member types), and eVal never
+writes to a repository on its own. GitHub issues, PR comments and
 auto-fix pull requests are created only on an explicit user action (member role). Issues are deduplicated per
 fingerprint with redacted bodies. An auto-fix pull request is always a new `eval/fix-…` branch cut from the
 audited commit, never a push to an existing branch; each file update carries the blob SHA it replaces, so GitHub
@@ -145,6 +146,34 @@ contain finding titles and locations, never evidence.
   never removes owners.
 * The **audit log** (Settings → Audit log, CSV export) shows sign-ins, MFA changes, membership, credentials, policies,
   triage, exports, SSO and SCIM events. CSV exports neutralize spreadsheet formulas.
+
+## 6b. Sandbox terminals (opt-in)
+
+Off unless the operator runs the sandbox service and sets `EVAL_SANDBOX_URL`, `EVAL_SANDBOX_PUBLIC_URL` and
+`EVAL_SANDBOX_SECRET`, and the organization's admin then enables it (logged as `org.sandbox_policy`). Details are in
+[SANDBOX.md](SANDBOX.md).
+
+* **Separation.** Only the sandbox service talks to Docker. It has no database, repository credentials or app
+  secrets. The worker builds the workspace (the audited commit without `.git`, plus the fix's files) and hands it
+  over as a tar, so no token or git remote ever enters a container.
+* **Containers.** They run under gVisor (`runsc`); the service refuses to start with `runc` unless
+  `EVAL_SANDBOX_ALLOW_RUNC=true`, and the terminal page then shows a warning. They have no network by default, run
+  as uid 1000 with all capabilities dropped and `no-new-privileges`, have no mounts or devices, and have memory,
+  CPU, process and file-size limits. They are deleted when they stop.
+* **Lifetime and capacity.** Sessions end at their deadline, after an idle period with no terminal attached, or on
+  request. There are server-wide and per-organization caps, and a per-organization hourly rate limit.
+* **Authentication.** eVal signs requests to the service with HMAC-SHA256 over the method, path, timestamp and
+  body hash, accepted for 60 seconds. A browser gets a 2-minute terminal token bound to the session and user; it is
+  sent as the first websocket message, never in a URL. The websocket checks `Origin` against
+  `EVAL_SANDBOX_ALLOWED_ORIGINS`. Request signatures and terminal tokens use separate derived keys.
+* **Authorization.** Opening a terminal needs the member role. A terminal is personal: other members, including
+  admins, get 404 for it. Opening, ending and saving back are logged (`sandbox.opened`, `sandbox.ended`,
+  `fix.edited`).
+* **Content Security Policy.** The terminal page alone allows inline styles (xterm's renderer injects them), the
+  pinned xterm scripts (with SRI) and the sandbox's websocket origin. Every other page keeps the strict policy.
+* **Residual risk.** The sandbox service holds the Docker socket, which is root-equivalent on its host, so it
+  belongs on a dedicated host or VM. gVisor greatly reduces kernel attack surface but does not remove it. With
+  `EVAL_SANDBOX_NETWORK` set to a network, egress is only as tight as that network's policy.
 
 ## 7. Known gaps (honest list)
 

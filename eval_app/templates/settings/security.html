@@ -31,6 +31,20 @@
         </div>
       </section>
 
+      {% if config.SANDBOX_URL and config.SANDBOX_PUBLIC_URL and config.SANDBOX_SECRET %}
+      <section class="pane" aria-labelledby="sbx-h">
+        <div class="pane-bar"><h2 id="sbx-h"><span><i class="bi bi-terminal" aria-hidden="true"></i> Sandbox terminals</span></h2><span class="pane-aside">{{ 'allowed' if g.org.allow_sandbox else 'off' }}</span></div>
+        <div class="pane-body">
+          <form method="post">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <div class="form-check mb-2"><input class="form-check-input" type="checkbox" name="allow_sandbox" id="allow-sbx" {% if g.org.allow_sandbox %}checked{% endif %}><label class="form-check-label" for="allow-sbx">Let members open a terminal on a fix, to run its tests</label></div>
+            <p class="pane-note mt-0">A terminal runs your repository's code, as typed by the member, in an isolated container on this eVal server's sandbox service. It gets the audited commit with the fix applied, and no credentials or git remote. It has no network access unless the operator configured one. Audits themselves still never run your code. Sessions end after {{ config.SANDBOX_MAX_MINUTES }} minutes, and each one is recorded in the audit log.</p>
+            <button class="act" name="action" value="sandbox">Save</button>
+          </form>
+        </div>
+      </section>
+      {% endif %}
+
       <section class="pane" aria-labelledby="sso-h">
         <div class="pane-bar"><h2 id="sso-h"><span><i class="bi bi-building-lock" aria-hidden="true"></i> Single sign-on (OpenID Connect)</span></h2>{% if conn %}<span class="pane-aside">{{ 'enabled' if conn.enabled else 'disabled' }}{% if conn.enforce %} · enforced{% endif %}</span>{% endif %}</div>
         <div class="pane-body">

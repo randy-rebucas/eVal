@@ -75,9 +75,10 @@ def create_app(config_name: str | None = None, overrides: dict | None = None) ->
     from .orgs.routes import bp as orgs_bp
     from .projects.repo_routes import bp as repos_bp
     from .projects.routes import bp as projects_bp
+    from .sandbox.routes import bp as sandbox_bp
 
     for bp in (auth_bp, orgs_bp, projects_bp, repos_bp, audits_bp, findings_bp, integrations_bp, github_oauth_bp,
-               fixes_bp):
+               fixes_bp, sandbox_bp):
         app.register_blueprint(bp)
 
     from .auth.mfa import bp as mfa_bp

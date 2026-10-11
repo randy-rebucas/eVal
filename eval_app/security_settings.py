@@ -46,6 +46,11 @@ def security(org_slug):
                 events.record("org.mfa_policy", organization_id=g.org.id, required=g.org.require_mfa)
                 flash("MFA requirement saved.", "success")
             db.session.commit()
+        elif action == "sandbox":
+            g.org.allow_sandbox = request.form.get("allow_sandbox") == "on"
+            events.record("org.sandbox_policy", organization_id=g.org.id, allowed=g.org.allow_sandbox)
+            db.session.commit()
+            flash("Sandbox terminals " + ("allowed." if g.org.allow_sandbox else "turned off."), "success")
         elif action == "sso":
             try:
                 issuer = sso.validate_issuer(request.form.get("issuer", ""))
