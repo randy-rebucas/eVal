@@ -418,7 +418,8 @@ class FixProposal(TenantMixin, TimestampMixin, db.Model):
 
     __tablename__ = "fix_proposals"
     __table_args__ = (
-        sa.CheckConstraint("status IN ('queued','running','ready','failed','pr_opened')", name="status_valid"),
+        sa.CheckConstraint("status IN ('queued','running','verifying','ready','failed','pr_opened')",
+                           name="status_valid"),
     )
 
     organization_id: Mapped[uuid.UUID] = org_fk()
@@ -436,6 +437,9 @@ class FixProposal(TenantMixin, TimestampMixin, db.Model):
     ai_model: Mapped[str] = mapped_column(sa.String(160), nullable=False, default="")
     # Re-audit of the patched tree (eval_engine.verify.Verification.to_dict(), or {"verdict": "error", "error"}).
     verification: Mapped[dict] = mapped_column(sa.JSON, nullable=False, default=dict, server_default="{}")
+    # Change history once a person edits the AI's files: [{"number", "kind": "ai"|"edit", "author", "at", "diff",
+    # "verdict"}]. Empty while the proposal is exactly what the AI generated.
+    revisions: Mapped[list] = mapped_column(sa.JSON, nullable=False, default=list, server_default="[]")
     error: Mapped[str] = mapped_column(sa.Text, nullable=False, default="")
     branch: Mapped[str] = mapped_column(sa.String(255), nullable=False, default="")
     pr_number: Mapped[int | None] = mapped_column(sa.Integer)
@@ -447,7 +451,11 @@ class FixProposal(TenantMixin, TimestampMixin, db.Model):
 
     @property
     def is_finished(self) -> bool:
-        return self.status not in ("queued", "running")
+        return self.status not in ("queued", "running", "verifying")
+
+    @property
+    def is_edited(self) -> bool:
+        return any(r.get("kind") == "edit" for r in self.revisions or [])
 
 
 class Finding(TenantMixin, TimestampMixin, db.Model):

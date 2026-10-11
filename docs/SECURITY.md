@@ -111,6 +111,11 @@ Before an auto-fix can become a pull request, the patched tree is **re-audited**
 original audit (same policy). If the patch introduced findings, opening the PR requires an explicit
 acknowledgement, which is recorded in the security log.
 
+Members can edit an unpublished fix's files in the browser before opening the pull request. Edits are limited to
+files already in the fix (512 KB each), checked against the revision the editor was opened on, rate-limited per
+organization, and recorded in the security log (`fix.edited`). Every edit is re-audited like the AI's patch, and
+earlier revisions are kept. The pull request states that the change was edited by hand. Editing never executes code.
+
 **GitHub App.** Webhooks are rejected unless `X-Hub-Signature-256` matches `GITHUB_APP_WEBHOOK_SECRET` (constant-time
 HMAC-SHA256 check). An installation is linked to an organization only through the setup flow: the callback state
 is bound to the admin's session and organization, and the GitHub user-authorization code is exchanged to confirm

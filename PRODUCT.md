@@ -78,7 +78,7 @@ eVal is honest by mechanism, not by tone:
 - Stack: Flask + Jinja templates, Bootstrap 5.3 and Bootstrap Icons from the jsDelivr CDN with SRI, one `app.css` and one `app.js`. Server-rendered, with a CSRF-protected form flow.
 - 23 analyzers (Ruff, Bandit, mypy, ESLint, tsc, Semgrep, Trivy, OSV.dev, PyPI/npm registry checks, plus built-in checks). Tenant isolation applies to every query.
 - Accepted risks need a reason, an owner (a team or vendor) and a review date at most `EVAL_ACCEPTED_RISK_MAX_DAYS` away. They reopen on that date.
-- Deliberately not built: automated fix PRs. AI patches are only displayed.
+- AI fixes are never pushed on their own. A member reviews the diff, can edit it in the browser, and opens the pull request; every version is re-audited first. eVal still never runs the code, so there is no terminal and tests are not run.
 - Not built yet: GitHub App/webhooks, org policies, knowledge-graph visualization, PDF export, email invites/verification, password reset, MFA, SSO. Billing and metering are also not built. See docs/ROADMAP.md.
 - The scoring code and docs/SCORING.md must change together.
 

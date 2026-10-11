@@ -230,6 +230,12 @@ the analyzers that worked in the original audit, and compares findings in the ch
 (*verified*, *partially verified*, *regressed*, *incomplete*) is shown on the fix page and written into the pull
 request. A fix that introduced new findings can only be opened after you confirm you reviewed them.
 
+If the AI's change is close but not right, edit it in place: **Edit the fix** on the fix page opens each changed file
+in an editor (one tab per file). **Save and re-audit** keeps the previous version as a revision (each one can be
+downloaded as a `.patch`) and re-runs the same analyzers on your edited files. Every selected finding in a changed
+file is then expected to be gone, so you can also finish a fix by hand. The page and the pull request say that the
+change was edited by hand. Only the files already in the fix can be edited, and nothing runs your code.
+
 ## Configuration
 
 All configuration is via environment variables (`.env.example` documents each). Key ones:

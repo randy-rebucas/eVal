@@ -39,7 +39,12 @@ def detail(org_slug, fix_id):
     proposal = get_scoped_or_404(FixProposal, fix_id)
     findings = {str(f.id): f for f in services.proposal_findings(proposal)}
     return render_template("fixes/detail.html", fix=proposal, audit=proposal.audit, findings=findings,
-                           diff_lines=proposal.diff.splitlines(), verification=proposal.verification or {})
+                           diff_lines=proposal.diff.splitlines(), verification=proposal.verification or {},
+                           revision=services.current_revision(proposal),
+                           max_kb=services.MAX_SOURCE_BYTES // 1024)
+
+
+STAGES = {"running": (50, "generating fix"), "verifying": (60, "re-auditing your edit"), "queued": (10, "queued")}
 
 
 @bp.get("/fixes/<fix_id>/status")
@@ -48,8 +53,43 @@ def status(org_slug, fix_id):
     proposal = get_scoped_or_404(FixProposal, fix_id)
     # Shaped like the audit status endpoint so the same progress poller drives the page.
     done = {"ready": "succeeded", "pr_opened": "succeeded", "failed": "failed"}
-    return jsonify(status=done.get(proposal.status, proposal.status), progress=50 if proposal.status == "running"
-                   else 10, stage="generating fix" if proposal.status == "running" else "queued")
+    progress, stage = STAGES.get(proposal.status, STAGES["queued"])
+    return jsonify(status=done.get(proposal.status, proposal.status), progress=progress, stage=stage)
+
+
+@bp.post("/fixes/<fix_id>/files")
+@org_required("member")
+def edit(org_slug, fix_id):
+    proposal = get_scoped_or_404(FixProposal, fix_id)
+    # The form is multipart (one part per file), so its in-memory limit is per file: see LARGE_FORM_ENDPOINTS.
+    paths, contents = request.form.getlist("path"), request.form.getlist("content")
+    try:
+        base = int(request.form.get("revision", ""))
+    except ValueError:
+        abort(400)
+    if len(paths) != len(contents) or len(paths) != len(set(paths)):
+        abort(400)
+    try:
+        services.save_edits(g.org, proposal, dict(zip(paths, contents, strict=True)), base, current_user)
+        flash("Edit saved. eVal re-audits the changed files now.", "success")
+    except services.FixError as exc:
+        db.session.rollback()
+        flash(str(exc), "danger")
+    return redirect(url_for("fixes.detail", org_slug=org_slug, fix_id=proposal.id))
+
+
+@bp.get("/fixes/<fix_id>/revisions/<int:number>.patch")
+@org_required()
+def revision_patch(org_slug, fix_id, number):
+    proposal = get_scoped_or_404(FixProposal, fix_id)
+    rev = next((r for r in proposal.revisions or [] if r.get("number") == number), None)
+    if rev is None or not rev.get("diff"):
+        abort(404)
+    name = re.sub(r"[^A-Za-z0-9._-]+", "-", proposal.audit.repository.name)[:60]
+    resp = Response(rev["diff"], mimetype="text/x-diff")
+    resp.headers["Content-Disposition"] = (f'attachment; filename="eval-fix-{name}-{proposal.id.hex[:8]}'
+                                           f'-r{number}.patch"')
+    return resp
 
 
 @bp.post("/fixes/<fix_id>/pull-request")
