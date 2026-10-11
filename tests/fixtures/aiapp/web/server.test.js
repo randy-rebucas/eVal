@@ -1,3 +1,4 @@
 test('server starts', () => {
-  require('./server');
+  const srv = require('./server');
+  expect(srv).toBeDefined();
 });

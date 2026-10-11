@@ -33,6 +33,14 @@ def test_uploads_are_not_constrained(alice, db):
     repo_service.create_upload_repository(org, project, "first upload")
     repo_service.create_upload_repository(org, project, "second upload")
     db.session.commit()  # both have full_name "": the index only covers GitHub rows
+    uploads = db.session.execute(
+        db.select(Repository).where(
+            Repository.organization_id == org.id,
+            Repository.project_id == project.id,
+            Repository.source == "upload",
+        )
+    ).scalars().all()
+    assert len(uploads) == 2 and all(r.full_name == "" for r in uploads)
 
 
 def test_concurrent_connect_reports_already_connected(alice, db, fake_github, monkeypatch):
