@@ -91,7 +91,8 @@ def connection_for_email(email: str) -> SsoConnection | None:
     if not domain:
         return None
     for conn in db.session.execute(db.select(SsoConnection).where(SsoConnection.enabled.is_(True))).scalars():
-        if domain in [d.lower() for d in conn.domains or []]:
+        lowered = set(d.lower() for d in (conn.domains or []))
+        if domain in lowered:
             return conn
     return None
 
