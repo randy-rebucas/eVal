@@ -2,7 +2,10 @@
 
 import * as vscode from "vscode";
 
-import { ApiError, Audit, EvalClient, Finding, Repository, Severity, TERMINAL_STATUSES, TriageStatus, pickAudit } from "./api";
+import {
+  ApiError, Audit, EvalClient, Finding, FixSummary, Repository, Severity, TERMINAL_STATUSES, TriageStatus, pickAudit,
+} from "./api";
+import { PatchError, applyPatch, parseFixRef } from "./patch";
 import {
   SEVERITIES, diagnosticMessage, fullNameFromRemote, fullNameFromWorkspaceUri, groupByFile, hoverMarkdown, isoDateAfter, levelFor, lineSpan,
 } from "./findings";
@@ -79,6 +82,14 @@ class EvalExtension implements vscode.Disposable {
       vscode.commands.registerCommand("eval.triage", (id: string, status: TriageStatus) =>
         this.run(() => this.triage(id, status))),
       vscode.commands.registerCommand("eval.openFinding", (id: string) => this.run(() => this.openFinding(id))),
+      vscode.commands.registerCommand("eval.applyFix", (ref?: string) => this.run(() => this.applyFix(ref))),
+      // vscode://randy-rebucas.eval-auditor/applyFix?id=<fix id> (the "Apply in VS Code" link on a fix page).
+      vscode.window.registerUriHandler({
+        handleUri: (uri) => {
+          const id = new URLSearchParams(uri.query).get("id");
+          if (uri.path === "/applyFix" && id) void this.run(() => this.applyFix(id));
+        },
+      }),
       vscode.languages.registerHoverProvider(SELECTOR, { provideHover: (d, p) => this.hover(d, p) }),
       vscode.languages.registerCodeActionsProvider(SELECTOR,
         { provideCodeActions: (d, r, c) => this.codeActions(d, r, c) },
@@ -409,6 +420,110 @@ class EvalExtension implements vscode.Disposable {
     if (url) await vscode.env.openExternal(vscode.Uri.parse(url));
   }
 
+  /** Pick one of the repository's fix proposals, or take the id from a pasted fix link. */
+  private async chooseFix(client: EvalClient, link: Link): Promise<string | undefined> {
+    const fixes = (await client.fixes(link.repoId)).filter((f) => f.status === "ready" || f.status === "pr_opened");
+    const verdicts: Record<string, string> = {
+      passed: "verified by re-audit", partial: "partially verified", regressed: "re-audit found new problems",
+      incomplete: "verification incomplete", error: "not verified",
+    };
+    const describe = (f: FixSummary) => [
+      `${f.fixed} finding(s) fixed`, f.verdict ? verdicts[f.verdict] ?? f.verdict : "not verified",
+      f.edited ? `edited by hand (revision ${f.revision})` : "", f.status === "pr_opened" ? "pull request opened" : "",
+    ].filter(Boolean).join(" · ");
+    const items = [
+      ...fixes.map((f) => ({
+        label: `$(sparkle) ${f.files.join(", ")}`, description: `${f.branch}@${f.commit_sha.slice(0, 7)}`,
+        detail: `${describe(f)} · ${new Date(f.created_at).toLocaleString()}`, id: f.id,
+      })),
+      { label: "$(link) Paste a fix link…", description: "", detail: "From the fix page in eVal", id: "" },
+    ];
+    const pick = await vscode.window.showQuickPick(items, {
+      title: `eVal: Apply a fix proposal to ${link.name}`, matchOnDescription: true, matchOnDetail: true,
+      placeHolder: fixes.length ? "Newest first" : "No generated fixes for this repository yet",
+    });
+    if (!pick) return undefined;
+    if (pick.id) return pick.id;
+    const pasted = await vscode.window.showInputBox({
+      title: "eVal: Apply Fix Proposal", prompt: "Fix link from eVal (…/fixes/<id>) or the fix id", ignoreFocusOut: true,
+      validateInput: (v) => parseFixRef(v) ? undefined : "Paste the link of an eVal fix page",
+    });
+    return pasted ? parseFixRef(pasted) : undefined;
+  }
+
+  /**
+   * Apply an eVal fix proposal to the working tree. All files are patched or none: each change must still match the
+   * local file. VS Code's refactor preview shows the edits before anything is written, and nothing is saved.
+   */
+  private async applyFix(ref?: string): Promise<void> {
+    const ctx = await this.requireLink();
+    if (!ctx) return;
+    const id = ref ? parseFixRef(ref) : await this.chooseFix(ctx.client, ctx.link);
+    if (ref && !id) throw new Error("That is not an eVal fix link or id.");
+    if (!id) return;
+    const fix = await ctx.client.fix(id);
+    const openInEval = async (message: string, error = true) => {
+      const text = `eVal: ${message}`;
+      const pick = error ? await vscode.window.showErrorMessage(text, "Open Fix in eVal")
+        : await vscode.window.showInformationMessage(text, "Open Fix in eVal");
+      if (pick) await vscode.env.openExternal(vscode.Uri.parse(fix.url));
+    };
+    if (fix.repository_id !== ctx.link.repoId) {
+      return openInEval(`this fix belongs to another repository than ${ctx.link.name}. Open that repository first.`);
+    }
+    if (fix.status !== "ready" && fix.status !== "pr_opened") {
+      return openInEval(fix.status === "verifying" ? "this fix is being re-audited. Try again in a moment."
+        : `this fix is ${fix.status}${fix.error ? `: ${fix.error}` : ""}.`);
+    }
+    const { branch } = this.head();
+    if (fix.fix_branch && branch === fix.fix_branch) {
+      return openInEval(`the checked-out branch ${branch} already contains this fix.`, false);
+    }
+    if (fix.verdict === "regressed") {
+      const go = await vscode.window.showWarningMessage(
+        "eVal's re-audit found new problems in this fix. Apply it anyway?", { modal: true }, "Apply Anyway");
+      if (go !== "Apply Anyway") return;
+    }
+
+    const root = vscode.Uri.parse(ctx.link.root);
+    const edit = new vscode.WorkspaceEdit();
+    const problems: string[] = [];
+    for (const p of fix.patches) {
+      const uri = vscode.Uri.joinPath(root, ...p.path.split("/"));
+      let doc: vscode.TextDocument;
+      try {
+        doc = await vscode.workspace.openTextDocument(uri);
+      } catch {
+        problems.push(`${p.path}: not found in this workspace`);
+        continue;
+      }
+      try {
+        const before = doc.getText();
+        edit.replace(uri, new vscode.Range(doc.positionAt(0), doc.positionAt(before.length)), applyPatch(before, p.diff),
+          { needsConfirmation: true, label: `eVal fix: ${p.path}` });
+      } catch (err) {
+        if (!(err instanceof PatchError)) throw err;
+        problems.push(`${p.path}: ${err.message}`);
+      }
+    }
+    if (problems.length) {
+      problems.forEach((p) => this.output.appendLine(`[apply fix ${fix.id}] ${p}`));
+      return openInEval(`the fix does not apply to your checkout (${problems[0]}` +
+        `${problems.length > 1 ? `, and ${problems.length - 1} more; see the eVal log` : ""}). It was made for ` +
+        `${fix.branch}@${fix.commit_sha.slice(0, 7)}; nothing was changed.`);
+    }
+    if (!(await vscode.workspace.applyEdit(edit))) return; // discarded in the preview
+    this.output.appendLine(`Applied fix ${fix.id} (revision ${fix.revision}) to ${fix.patches.length} file(s).`);
+    const virtual = root.scheme === "vscode-vfs"; // vscode.dev / github.dev: an editor without a terminal
+    const pick = await vscode.window.showInformationMessage(
+      `eVal: applied the fix to ${fix.patches.length} file(s); they are not saved yet. ` +
+      (virtual ? "This editor has no terminal: commit to a branch and let CI (or a codespace) run your tests."
+        : "Save, run your tests in the terminal, then commit."),
+      ...(virtual ? [] : ["Open Terminal"]), "Open Fix in eVal");
+    if (pick === "Open Terminal") await vscode.commands.executeCommand("workbench.action.terminal.new");
+    else if (pick) await vscode.env.openExternal(vscode.Uri.parse(fix.url));
+  }
+
   private async triage(id: string, status: TriageStatus): Promise<void> {
     const finding = this.findings.find((f) => f.id === id);
     const client = await this.client(true);
@@ -465,6 +580,7 @@ class EvalExtension implements vscode.Disposable {
       { label: "$(refresh) Load latest findings", command: "eval.refresh" },
       { label: "$(play) Run audit on current branch", command: "eval.runAudit" },
       ...(this.audit ? [{ label: "$(link-external) Open audit in browser", command: "eval.openAudit" }] : []),
+      { label: "$(sparkle) Apply fix proposal…", command: "eval.applyFix" },
       { label: "$(repo) Link workspace to repository…", command: "eval.linkRepository",
         description: this.link()?.name },
       { label: "$(clear-all) Clear findings", command: "eval.clear" },

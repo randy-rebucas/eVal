@@ -41,6 +41,7 @@ def detail(org_slug, fix_id):
     return render_template("fixes/detail.html", fix=proposal, audit=proposal.audit, findings=findings,
                            diff_lines=proposal.diff.splitlines(), verification=proposal.verification or {},
                            revision=services.current_revision(proposal),
+                           ide_links=services.ide_links(proposal), ide_branch=services.ide_branch(proposal),
                            max_kb=services.MAX_SOURCE_BYTES // 1024)
 
 

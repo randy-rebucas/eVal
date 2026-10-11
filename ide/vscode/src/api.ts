@@ -85,6 +85,35 @@ export interface TriageDecision {
   expires_on?: string;
 }
 
+export interface FixSummary {
+  id: string;
+  audit_id: string;
+  repository_id: string;
+  status: "queued" | "running" | "verifying" | "ready" | "failed" | "pr_opened" | string;
+  branch: string;
+  commit_sha: string;
+  revision: number;
+  edited: boolean;
+  verdict: string | null;
+  files: string[];
+  fixed: number;
+  not_changed: number;
+  ai_model: string;
+  pr_url: string | null;
+  /** The ``eval/fix-…`` branch, once the fix was opened as a pull request. */
+  fix_branch: string | null;
+  created_at: string;
+  url: string;
+}
+
+export interface FixDetail extends FixSummary {
+  error: string;
+  patches: Array<{ path: string; diff: string }>;
+  verification: { verdict?: string; error?: string };
+  findings: Array<{ id: string; changed: boolean; note: string; title?: string; severity?: Severity; location?: string }>;
+  ide_links: { codespaces?: string; github_dev?: string };
+}
+
 export const TERMINAL_STATUSES = new Set(["succeeded", "failed", "cancelled"]);
 
 /** Upper bound on pages fetched for one audit (50 findings per page server-side). */
@@ -162,6 +191,16 @@ export class EvalClient {
       if (page >= res.pages) break;
     }
     return all;
+  }
+
+  /** The repository's newest AI fix proposals, newest first. */
+  async fixes(repoId: string): Promise<FixSummary[]> {
+    return (await this.request<{ fixes: FixSummary[] }>("GET", `/repositories/${encodeURIComponent(repoId)}/fixes`))
+      .fixes;
+  }
+
+  async fix(fixId: string): Promise<FixDetail> {
+    return (await this.request<{ fix: FixDetail }>("GET", `/fixes/${encodeURIComponent(fixId)}`)).fix;
   }
 
   async triage(findingId: string, decision: TriageDecision): Promise<Finding> {

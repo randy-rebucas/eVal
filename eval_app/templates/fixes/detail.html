@@ -110,6 +110,31 @@
   </section>
   {% endif %}
 
+  {% if fix.is_finished and fix.diff %}
+  {% set fix_url = url_for('fixes.detail', org_slug=g.org.slug, fix_id=fix.id, _external=True) %}
+  <section class="pane" aria-labelledby="ide-h">
+    <div class="pane-bar"><h2 id="ide-h"><span><i class="bi bi-terminal" aria-hidden="true"></i> Continue in an editor</span></h2><span class="pane-aside">run your tests there</span></div>
+    <div class="px-3 py-3">
+      {% if fix.status == 'pr_opened' %}
+      <p class="mb-2">Branch <span class="mono">{{ fix.branch }}</span> already contains this fix. Open it, then run your tests in the terminal.</p>
+      {% else %}
+      <p class="mb-2">Open the audited branch <span class="mono">{{ ide_branch }}</span> and run <strong>eVal: Apply Fix Proposal</strong> from the command palette with the <a href="https://marketplace.visualstudio.com/items?itemName=randy-rebucas.eval-auditor" rel="noopener noreferrer" target="_blank">eVal extension</a>. VS Code shows each change for review before writing it. Then run your tests in the terminal and commit.</p>
+      {% endif %}
+      {% if ide_links %}
+      <div class="d-flex flex-wrap gap-2 mb-2">
+        <a class="btn-ink" href="{{ ide_links.codespaces }}" rel="noopener noreferrer" target="_blank"><i class="bi bi-terminal" aria-hidden="true"></i> Open in Codespaces</a>
+        <a class="act" href="{{ ide_links.github_dev }}" rel="noopener noreferrer" target="_blank"><i class="bi bi-code-square" aria-hidden="true"></i> Open in github.dev</a>
+      </div>
+      <p class="pane-note mt-0">Codespaces is a full VS Code with a terminal, running on GitHub's machines under your GitHub account. github.dev is an editor only: no terminal. eVal itself never runs your code.</p>
+      {% endif %}
+      {% if fix.status != 'pr_opened' %}
+      <p class="mb-2"><a class="act" href="vscode://randy-rebucas.eval-auditor/applyFix?id={{ fix.id }}"><i class="bi bi-window" aria-hidden="true"></i> Apply in VS Code desktop</a> <span class="pane-note">uses your most recent VS Code window, so have this repository open there</span></p>
+      <p class="pane-note mb-0">Fix link for the extension: <code class="user-select-all">{{ fix_url }}</code> <button type="button" class="copy-btn" data-copy="{{ fix_url }}" hidden><i class="bi bi-clipboard" aria-hidden="true"></i><span>copy</span></button></p>
+      {% endif %}
+    </div>
+  </section>
+  {% endif %}
+
   {% if fix.status == 'ready' and can_write and fix.files %}
   <section class="pane" aria-labelledby="edit-h">
     <div class="pane-bar"><h2 id="edit-h"><span><i class="bi bi-pencil-square" aria-hidden="true"></i> Edit the fix</span></h2><span class="pane-aside">revision {{ revision }} · {{ fix.files|length }} file{{ 's' if fix.files|length != 1 }}</span></div>

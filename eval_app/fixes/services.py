@@ -416,6 +416,34 @@ def open_pull_request(org: Organization, proposal: FixProposal, user_id, *, acce
     return pr["html_url"]
 
 
+# ----------------------------------------------------------------------------------------------- hand-off
+def file_patches(proposal: FixProposal) -> list[dict]:
+    """The proposal's diff split per file: [{"path", "diff"}], in the order of ``proposal.files``."""
+    chunks: dict[str, str] = {}
+    for part in re.split(r"(?m)^(?=diff --git )", proposal.diff):
+        plus = re.search(r"(?m)^\+\+\+ b/(.+)$", part)
+        if plus:
+            chunks[plus.group(1)] = part
+    return [{"path": f["path"], "diff": chunks.get(f["path"], "")} for f in proposal.files]
+
+
+def ide_branch(proposal: FixProposal) -> str:
+    """Branch to open in a browser IDE: the fix's own branch once it is a pull request, else the audited branch."""
+    return proposal.branch if proposal.status == "pr_opened" and proposal.branch else _base_branch(proposal.audit)
+
+
+def ide_links(proposal: FixProposal) -> dict[str, str]:
+    """Codespaces (editor with a terminal, run by GitHub) and github.dev links, for github.com repositories only."""
+    from urllib.parse import quote
+
+    repo = proposal.audit.repository
+    if repo.source != "github" or not repo.full_name or \
+            current_app.config.get("GITHUB_API_URL", "").rstrip("/") != "https://api.github.com":
+        return {}
+    path = f"{quote(repo.full_name, safe='/')}/tree/{quote(ide_branch(proposal), safe='/')}"
+    return {"codespaces": f"https://codespaces.new/{path}", "github_dev": f"https://github.dev/{path}"}
+
+
 def proposals_for(audit: Audit) -> list[FixProposal]:
     return list(db.session.execute(
         db.select(FixProposal).where(FixProposal.audit_id == audit.id,

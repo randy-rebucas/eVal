@@ -236,6 +236,11 @@ downloaded as a `.patch`) and re-runs the same analyzers on your edited files. E
 file is then expected to be gone, so you can also finish a fix by hand. The page and the pull request say that the
 change was edited by hand. Only the files already in the fix can be edited, and nothing runs your code.
 
+To run your tests against a fix, use **Continue in an editor** on the fix page. **Open in Codespaces** gives a full
+VS Code with a terminal, running on GitHub's machines (github.com repositories). From there, or from your desktop,
+**eVal: Apply Fix Proposal** in the [VS Code extension](ide/vscode/README.md) applies the fix after showing each change.
+The terminal never runs on eVal's servers.
+
 ## Configuration
 
 All configuration is via environment variables (`.env.example` documents each). Key ones:
