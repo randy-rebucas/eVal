@@ -170,6 +170,8 @@ def render_markdown(model: dict) -> str:
     if profile:
         auth = ", ".join(profile.get("auth") or {}) or "none detected"
         stores = ", ".join(profile.get("datastores") or {}) or "none detected"
+        if profile.get("sql_dialects"):
+            stores += f" (SQL: {', '.join(profile['sql_dialects'])})"
         lines += ["", "## Application profile", "",
                   f"- **Web framework:** {_md(', '.join(profile.get('web_frameworks') or []) or 'none detected')}",
                   f"- **Authentication:** {_md(auth)}", f"- **Data stores:** {_md(stores)}", "",

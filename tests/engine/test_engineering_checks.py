@@ -204,8 +204,9 @@ def test_scalability_js(tmp_path):
     assert ("eval:performance.in-process-state", 6) in found
     assert ("eval:performance.memory-session-store", 5) in found
     assert ("eval:performance.local-file-storage", 4) in found
-    assert ("eval:performance.unbounded-query", 7) in found
-    assert ("eval:performance.unbounded-query", 8) not in found
+    db = {(f.rule_id, f.line_start) for f in run("database", tmp_path)}
+    assert ("eval:database.missing-pagination", 7) in db
+    assert ("eval:database.missing-pagination", 8) not in db
 
 
 def test_session_store_configured_not_flagged(tmp_path):

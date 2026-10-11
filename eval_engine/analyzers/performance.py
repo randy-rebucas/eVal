@@ -1,7 +1,9 @@
-"""Performance and scalability risks found statically (N+1 queries, unbounded queries, blocking calls, missing
-timeouts, process-local state, in-memory session stores, local-disk uploads). Nothing is executed or measured: every
-finding here
-is a *static estimate* (kind=estimate) unless it is a concrete misconfiguration such as a missing timeout."""
+"""Performance and scalability risks found statically (blocking calls, missing timeouts, process-local state,
+in-memory session stores, local-disk uploads). Nothing is executed or measured: every finding here is a *static
+estimate* (kind=estimate) unless it is a concrete misconfiguration such as a missing timeout.
+
+Database access patterns (N+1 queries, unbounded queries, missing pagination) are reported by the database
+analyzer, which resolves queries against the schema."""
 
 from __future__ import annotations
 
@@ -13,9 +15,6 @@ from .base import Analyzer, AnalyzerContext, is_test_path
 from .registry import register
 
 HTTP_FUNCS = {"get", "post", "put", "patch", "delete", "head", "request", "options"}
-QUERY_ATTRS = {"execute", "scalar", "scalars", "filter", "filter_by", "get", "first", "one", "all",
-               "get_or_404", "first_or_404"}
-ORM_ROOTS = re.compile(r"(\.query\b|\bsession\b|\.objects\b|\bdb\.)")
 BLOCKING_IN_ASYNC = {"time.sleep", "requests.get", "requests.post", "requests.put", "requests.delete",
                      "requests.request", "urllib.request.urlopen", "subprocess.run", "subprocess.call"}
 # Names that suggest data, not configuration: module-level containers with these names written by request handlers.
@@ -25,7 +24,6 @@ MUTABLE_FACTORIES = {"dict", "list", "set", "defaultdict", "OrderedDict", "Count
 MUTATORS = {"append", "add", "update", "setdefault", "extend", "insert", "__setitem__", "appendleft"}
 JS_STATE_DECL = re.compile(r"^(?:export\s+)?(?:const|let|var)\s+(\w+)\s*(?::[^=]+)?=\s*(?:\{\s*\}|\[\s*\]|new\s+"
                            r"(?:Map|Set)\s*(?:<[^>]*>)?\(\s*\))\s*;?\s*$")
-JS_UNBOUNDED = re.compile(r"\.findMany\(\s*\)|\.findAll\(\s*\)|\b[A-Z]\w*\.find\(\s*(\{\s*\})?\s*\)")
 
 
 def _call_name(node: ast.Call) -> str:
@@ -130,7 +128,6 @@ class PerformanceAnalyzer(Analyzer):
 
     def _python(self, ctx, rel, tree):
         out = self._in_process_state(ctx, rel, tree) + self._local_uploads(ctx, rel, tree)
-        reported_loops = set()
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
                 name = _call_name(node)
@@ -144,22 +141,6 @@ class PerformanceAnalyzer(Analyzer):
                                        + (" (httpx has a 5s default; set it explicitly.)" if root == "httpx" else ""),
                                        "Pass an explicit timeout (connect, read) and handle timeouts.",
                                        rel, node.lineno))
-            if isinstance(node, ast.For | ast.AsyncFor):
-                for inner in ast.walk(node):
-                    if inner is node or not isinstance(inner, ast.Call):
-                        continue
-                    name = _call_name(inner)
-                    attr = name.rpartition(".")[2]
-                    if attr in QUERY_ATTRS and ORM_ROOTS.search("." + name) and node.lineno not in reported_loops:
-                        reported_loops.add(node.lineno)
-                        out.append(self._f(ctx, "performance.query-in-loop", "Database query inside a loop "
-                                           "(possible N+1)", Severity.MEDIUM, Confidence.MEDIUM, FindingKind.ESTIMATE,
-                                           f"`{name}()` runs once per iteration of the loop at line {node.lineno}. "
-                                           "With N items this issues N queries; latency grows linearly with data "
-                                           "size. (Static estimate — not measured.)",
-                                           "Fetch in bulk (IN clause, joinedload/selectinload, prefetch_related) "
-                                           "before the loop.", rel, inner.lineno))
-                        break
             if isinstance(node, ast.AsyncFunctionDef):
                 for inner in ast.walk(node):
                     if isinstance(inner, ast.Call) and _call_name(inner) in BLOCKING_IN_ASYNC:
@@ -170,16 +151,6 @@ class PerformanceAnalyzer(Analyzer):
                                            "request on that worker.",
                                            "Use the async equivalent (asyncio.sleep, httpx.AsyncClient) or run it in "
                                            "a thread executor.", rel, inner.lineno))
-            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) and _is_route(node):
-                for inner in ast.walk(node):
-                    if isinstance(inner, ast.Call) and _call_name(inner).endswith(".all") and ".query" in _call_name(
-                            inner) and not re.search(r"\b(limit|paginate|slice)\b", ast.unparse(inner)):
-                        out.append(self._f(ctx, "performance.unbounded-query", "Unbounded query in request handler",
-                                           Severity.LOW, Confidence.MEDIUM, FindingKind.ESTIMATE,
-                                           "`.all()` returns every row; response time and memory grow with table "
-                                           "size. (Static estimate.)", "Paginate (limit/offset or keyset).",
-                                           rel, inner.lineno))
-                        break
         return out
 
     def _js(self, ctx, rel):
@@ -196,12 +167,6 @@ class PerformanceAnalyzer(Analyzer):
                                    "Sync APIs block Node's single event loop; if called per request, all clients "
                                    "wait. (Static estimate — it may only run at startup.)",
                                    "Use the async/promise API inside request paths.", rel, i))
-            if is_server and JS_UNBOUNDED.search(line) and not re.search(r"\b(limit|take|first|paginate)\b", line):
-                out.append(self._f(ctx, "performance.unbounded-query", "Unbounded query in a server module",
-                                   Severity.LOW, Confidence.MEDIUM, FindingKind.ESTIMATE,
-                                   "The query returns every matching row; response time and memory grow with table "
-                                   "size. (Static estimate.)", "Paginate (`take`/`limit` with a cursor or offset).",
-                                   rel, i))
             for name in list(containers):
                 if i > containers[name] and re.search(rf"\b{re.escape(name)}(\[[^\]]+\]\s*=[^=]|\.(push|set|add)\()",
                                                       line):

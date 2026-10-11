@@ -41,7 +41,11 @@ indicators, and categories it could not assess are shown as *not assessed*.
   flags, credentials in logs, upload validation and rate limiting on login routes), **schema-aware auth checks**
   (an application profile of framework, auth scheme, datastore and password schema decides whether CSRF, JWT,
   password-storage and NoSQL-injection checks apply; the report shows the profile and why each applies),
-  database access and schema design, DevOps/CI and observability (metrics, tracing, request ids, logging),
+  **databases** (PostgreSQL, MySQL, SQLite and MongoDB, engine-aware: schema read from SQLAlchemy, Django, Prisma
+  and Mongoose models plus every migration; missing indexes, N+1 queries and lazy loads, unbounded queries and
+  unpaginated list endpoints, destructive and locking migrations, missing or inconsistent foreign keys and
+  relationships, duplicated data, transaction handling, lost updates and check-then-insert races),
+  DevOps/CI and observability (metrics, tracing, request ids, logging),
   **testing** (missing tests per language, test-to-code ratio, missing API and integration tests, untested
   critical paths such as auth and payments, untested error paths, assertion-free and weak assertions, duplicated
   test setup), dependencies, maintainability (including swallowed errors), **architecture** (module and package

@@ -70,6 +70,23 @@ SQL_DEPS = {"sqlalchemy", "django", "psycopg2", "psycopg2-binary", "psycopg", "p
             "peewee", "tortoise-orm", "sqlmodel", "aiosqlite", "pg", "mysql", "mysql2", "sqlite3", "better-sqlite3",
             "sequelize", "typeorm", "knex", "drizzle-orm", "kysely", "flask-sqlalchemy"}
 MONGO_DEPS = {"pymongo", "motor", "mongoengine", "beanie", "mongoose", "mongodb", "flask-pymongo", "djongo"}
+# SQL dialects: which engine the SQL layer talks to decides whether a schema or migration risk is real (MySQL/InnoDB
+# indexes foreign keys itself; only PostgreSQL blocks writes while a plain CREATE INDEX runs; SQLite cannot ALTER
+# most things and ignores FOR UPDATE).
+DIALECT_DEPS = {
+    "postgresql": {"psycopg2", "psycopg2-binary", "psycopg", "psycopg-binary", "asyncpg", "pg8000", "pg", "pg-promise",
+                   "postgres", "@neondatabase/serverless", "@vercel/postgres", "@prisma/adapter-pg"},
+    "mysql": {"pymysql", "mysqlclient", "mysql-connector-python", "aiomysql", "asyncmy", "mysql", "mysql2", "mariadb",
+              "@planetscale/database"},
+    "sqlite": {"aiosqlite", "sqlite3", "better-sqlite3", "@libsql/client", "sql.js"},
+}
+DIALECT_URL = re.compile(r"\b(postgres(?:ql)?|mysql|mariadb|sqlite)(?:\+\w+)?://")
+DJANGO_ENGINE = re.compile(r"django\.(?:contrib\.gis\.)?db\.backends\.(postgresql|postgis|mysql|sqlite3)")
+COMPOSE_IMAGE = re.compile(r"""^\s*image:\s*["']?(?:[\w.-]+/)?(postgres|postgis|mysql|mariadb)\b""", re.M)
+PRISMA_PROVIDERS = {"postgresql": "postgresql", "cockroachdb": "postgresql", "mysql": "mysql", "sqlite": "sqlite"}
+DIALECT_ALIASES = {"postgres": "postgresql", "postgis": "postgresql", "mariadb": "mysql", "sqlite3": "sqlite"}
+CONFIG_SUFFIXES = (".env", ".example", ".ini", ".toml", ".cfg", ".yml", ".yaml", ".conf")
+SERVER_DIALECTS = ("postgresql", "mysql")
 REDIS_DEPS = {"redis", "ioredis", "aioredis"}
 UPLOADS = re.compile(r"\brequest\.(?:files|FILES)\b|\bUploadFile\b|\bmulter\b|express-fileupload|formidable|busboy|"
                      r"FileField\(")
@@ -83,6 +100,7 @@ class AppProfile:
     web_frameworks: list[str] = field(default_factory=list)
     auth: dict[str, str] = field(default_factory=dict)        # scheme -> evidence
     datastores: dict[str, str] = field(default_factory=dict)  # sql | mongodb | redis -> evidence
+    sql_dialects: dict[str, str] = field(default_factory=dict)  # postgresql | mysql | sqlite -> first evidence
     password_hashing: str = ""                                # evidence of a password hashing function, if any
     password_login: str = ""                                  # evidence the app checks passwords itself
     password_columns: list[tuple[str, int]] = field(default_factory=list)  # (file, line) of stored password fields
@@ -96,6 +114,15 @@ class AppProfile:
     @property
     def keeps_passwords(self) -> bool:
         return bool(self.password_columns or self.password_login)
+
+    @property
+    def production_sql_dialects(self) -> set[str]:
+        """The SQL engines production plausibly runs on. A server engine (PostgreSQL, MySQL) next to SQLite means
+        SQLite is the local/test default (``DATABASE_URL`` falling back to ``sqlite:///``), so it is left out.
+        Empty when nothing names an engine: checks then assume any engine may be in use."""
+        found = set(self.sql_dialects)
+        server = found & set(SERVER_DIALECTS)
+        return server or found
 
     def applicability(self) -> list[dict]:
         """Which schema-dependent security checks apply to this application, and why."""
@@ -136,6 +163,7 @@ class AppProfile:
             "web_frameworks": self.web_frameworks,
             "auth": self.auth,
             "datastores": self.datastores,
+            "sql_dialects": self.sql_dialects,
             "password_hashing": self.password_hashing,
             "password_columns": [f"{f}:{line}" for f, line in self.password_columns],
             "uploads": self.uploads,
@@ -192,4 +220,29 @@ def build_profile(ctx) -> AppProfile:
             profile.server_rendered = rel
     if "django" in profile.web_frameworks:
         profile.datastores.setdefault("sql", "Django ORM")
+    _detect_dialects(ctx, profile, deps)
     return profile
+
+
+def _detect_dialects(ctx, profile: AppProfile, deps: set[str]) -> None:
+    found = profile.sql_dialects
+    for dialect, names in DIALECT_DEPS.items():
+        if hit := sorted(deps & names):
+            found.setdefault(dialect, f"dependency {hit[0]}")
+    for rel in ctx.files:
+        if is_test_path(rel) or not (rel.endswith(CODE_SUFFIXES + CONFIG_SUFFIXES + (".prisma",))
+                                     or rel.rsplit("/", 1)[-1] in ("Dockerfile", ".env.example", ".env.sample")):
+            continue
+        text = ctx.read(rel) or ""
+        if rel.endswith(".prisma"):
+            schema = re.sub(r"generator\s+\w+\s*\{[^}]*\}", "", text)
+            if (m := re.search(r'provider\s*=\s*"(\w+)"', schema)) and m.group(1) in PRISMA_PROVIDERS:
+                found.setdefault(PRISMA_PROVIDERS[m.group(1)], f"Prisma provider in {rel}")
+            continue
+        for pattern, what in ((DJANGO_ENGINE, "Django ENGINE"), (DIALECT_URL, "connection URL"),
+                              (COMPOSE_IMAGE, "container image")):
+            for m in pattern.finditer(text):
+                dialect = DIALECT_ALIASES.get(m.group(1), m.group(1))
+                found.setdefault(dialect, f"{what} in {rel}")
+        if rel.endswith(".py") and re.search(r"^\s*import sqlite3\b", text, re.M):
+            found.setdefault("sqlite", f"import sqlite3 in {rel}")
