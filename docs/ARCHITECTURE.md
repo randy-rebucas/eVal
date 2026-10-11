@@ -58,6 +58,10 @@ eval_engine/
     secrets.py, devops.py, testing.py, database.py, api_security.py,
     dependencies.py, maintainability.py, architecture.py, performance.py,
     configuration.py, taint.py, ai_code.py                                  (built-in)
+    db_model.py      Schema model: ORM models + replayed migrations (used by database.py)
+    db_migrations.py Migration parsing: SQL, Alembic, Django, knex, Sequelize → operations
+    db_checks.py     Schema and migration checks, engine-aware
+    db_queries.py    Query checks: N+1, pagination, indexes, transactions, races
   ai/
     base.py          AIProvider protocol, AIRequest/AIResponse
     anthropic_provider.py, openai_provider.py   official SDKs; OpenAI-compatible local endpoints via base_url

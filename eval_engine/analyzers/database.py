@@ -1,5 +1,20 @@
-"""Database design and data-access safety: string-built SQL, migrations, unindexed foreign keys, missing primary
-keys, money stored as floating point, and natural keys without uniqueness constraints."""
+"""Database design and data-access safety, for PostgreSQL, MySQL, SQLite and (where it is used) MongoDB.
+
+* SQL built from strings; missing primary keys, money stored as floating point, natural keys without a unique
+  constraint; ORM models without migrations (this module).
+* Schema: foreign keys without an index, columns that reference another table without a foreign key, inconsistent
+  relationships (asymmetric back_populates, no join path, mismatched key types, SET NULL on NOT NULL, Django
+  accessor clashes, unknown Mongoose refs), and duplicated data (copied columns, counter caches) — ``db_checks``.
+* Migrations: destructive operations, operations that lock or break a live database (per engine), and migrations
+  that cannot be reversed — ``db_checks``.
+* Queries: N+1 queries and lazy loads in loops, unbounded queries, list endpoints without pagination, filters on
+  unindexed columns, non-atomic multi-write operations, commits and rollbacks, side effects inside transactions,
+  lost updates, check-then-insert races and misused row locks — ``db_queries``.
+
+The schema comes from ORM models and every forward migration (``db_model``), and the engine from the application
+profile, so a check only fires where it is true for the engine in use (InnoDB indexes foreign keys itself; only
+PostgreSQL blocks writes during a plain CREATE INDEX; SQLite ignores FOR UPDATE).
+"""
 
 from __future__ import annotations
 
@@ -8,6 +23,9 @@ import re
 
 from ..findings import Category, Confidence, FindingKind, Severity
 from .base import Analyzer, AnalyzerContext, is_test_path
+from .db_checks import migration_checks, schema_checks
+from .db_model import build_schema
+from .db_queries import run_query_checks
 from .registry import register
 
 SQL_KEYWORDS = re.compile(r"(?is)^\s*(select|insert|update|delete|with|create|alter|drop|merge|replace)\b")
@@ -82,7 +100,6 @@ class DatabaseAnalyzer(Analyzer):
             text = ctx.read(rel) or ""
             if re.search(r"\b(db\.Model|DeclarativeBase|declarative_base\(\))", text):
                 uses_sqlalchemy_models = True
-                findings.extend(self._unindexed_fks(ctx, rel, tree))
             if re.search(r"\b(db\.Model|DeclarativeBase|declarative_base\(\)|models\.Model)\b", text) and not \
                     is_test_path(rel):
                 findings.extend(self._schema_design(ctx, rel, tree))
@@ -104,6 +121,15 @@ class DatabaseAnalyzer(Analyzer):
         for rel in ctx.files_with_suffix(".prisma"):
             findings.extend(self._prisma_design(ctx, rel))
         findings.extend(self._migrations(ctx, uses_sqlalchemy_models))
+
+        schema = build_schema(ctx)
+        dialects = ctx.profile.production_sql_dialects
+        issues = schema_checks(schema, dialects) + migration_checks(schema, dialects) + run_query_checks(
+            ctx, schema, ctx.profile)
+        findings.extend(self.finding(
+            ctx, rule=i.rule, title=i.title, category=Category.DATABASE, severity=i.severity, confidence=i.confidence,
+            kind=i.kind, description=i.description, remediation=i.remediation, file_path=i.file, line=i.line,
+            evidence=i.evidence) for i in issues)
         return findings
 
     # ------------------------------------------------------------------------------------- schema design
@@ -250,76 +276,6 @@ class DatabaseAnalyzer(Analyzer):
             remediation="Use parameterized queries (e.g. `text('... WHERE id = :id')` with params, `cursor.execute("
             "sql, (value,))`, or the ORM query API). Never interpolate identifiers from user input; allow-list them.",
             file_path=rel, line=line, references=["https://cwe.mitre.org/data/definitions/89.html"])
-
-    @staticmethod
-    def _table_args_leading_columns(cls: ast.ClassDef) -> set[str]:
-        """Columns that lead a composite Index/UniqueConstraint/PrimaryKeyConstraint in ``__table_args__``
-        (such an index serves lookups and cascades on that column)."""
-        leading: set[str] = set()
-        for stmt in cls.body:
-            targets = stmt.targets if isinstance(stmt, ast.Assign) else [stmt.target] if isinstance(
-                stmt, ast.AnnAssign) else []
-            if not any(isinstance(t, ast.Name) and t.id == "__table_args__" for t in targets) or stmt.value is None:
-                continue
-            for node in ast.walk(stmt.value):
-                if not isinstance(node, ast.Call):
-                    continue
-                fname = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
-                if fname not in ("Index", "UniqueConstraint", "PrimaryKeyConstraint"):
-                    continue
-                cols = [a.value for a in node.args if isinstance(a, ast.Constant) and isinstance(a.value, str)]
-                if fname == "Index":
-                    cols = cols[1:]  # first positional argument is the index name
-                if cols:
-                    leading.add(cols[0])
-        return leading
-
-    def _unindexed_fks(self, ctx, rel, tree):
-        out = []
-        for cls in [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]:
-            leading = self._table_args_leading_columns(cls)
-            for stmt in cls.body:
-                if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
-                    name, value = stmt.target.id, stmt.value
-                elif isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
-                    name, value = stmt.targets[0].id, stmt.value
-                else:
-                    continue
-                if name not in leading and value is not None:
-                    out.extend(self._check_fk_column(ctx, rel, value))
-        # Core tables: Table("name", metadata, Column(..., ForeignKey(...)), ..., Index(...))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call) and (getattr(node.func, "attr", None) == "Table"
-                                               or getattr(node.func, "id", None) == "Table"):
-                for arg in node.args:
-                    out.extend(self._check_fk_column(ctx, rel, arg))
-        return out
-
-    def _check_fk_column(self, ctx, rel, node):
-        out = []
-        if isinstance(node, ast.Call):
-            fname = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
-            if fname not in ("Column", "mapped_column"):
-                return out
-            has_fk = any(isinstance(a, ast.Call) and (getattr(a.func, "attr", None) == "ForeignKey"
-                                                     or getattr(a.func, "id", None) == "ForeignKey")
-                         for a in node.args)
-            if not has_fk:
-                return out
-            kw = {k.arg: k.value for k in node.keywords if k.arg}
-            indexed = any(isinstance(kw.get(k), ast.Constant) and kw[k].value is True
-                          for k in ("index", "primary_key", "unique"))
-            if not indexed:
-                out.append(self.finding(
-                    ctx, rule="database.fk-without-index", title="Foreign key column without an index",
-                    category=Category.DATABASE, severity=Severity.LOW, confidence=Confidence.MEDIUM,
-                    kind=FindingKind.ESTIMATE,
-                    description="PostgreSQL and SQLite do not index foreign key columns automatically. Joins and "
-                    "cascading deletes on this column will scan the table as it grows. (Static estimate: an index "
-                    "may exist in a migration or __table_args__.)",
-                    remediation="Add `index=True` or a composite index that starts with this column.",
-                    file_path=rel, line=node.lineno))
-        return out
 
     def _migrations(self, ctx: AnalyzerContext, uses_sqlalchemy_models: bool):
         has_alembic = any(f.endswith(("alembic.ini", "/env.py")) and ("alembic" in f or "migrations" in f)

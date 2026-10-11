@@ -319,12 +319,15 @@ def test_architecture_no_false_cycle_for_same_named_modules(tmp_path):
 
 
 def test_performance_analyzer():
-    _, rules, findings = rules_from("performance", "vulnapp")
-    assert {"eval:performance.query-in-loop", "eval:performance.http-without-timeout",
-            "eval:performance.unbounded-query"} <= rules
-    assert all(f.kind == "estimate" for f in findings if f.rule_id == "eval:performance.query-in-loop")
+    _, rules, _ = rules_from("performance", "vulnapp")
+    assert "eval:performance.http-without-timeout" in rules
     _, clean, _ = rules_from("performance", "cleanapp")
     assert clean == set()
+    # Database access patterns moved to the database analyzer, which resolves queries against the schema.
+    _, db_rules, db_findings = rules_from("database", "vulnapp")
+    assert {"eval:database.n-plus-one", "eval:database.missing-pagination"} <= db_rules
+    n1 = next(f for f in db_findings if f.rule_id == "eval:database.n-plus-one")
+    assert n1.kind == "estimate" and n1.line_start == 33 and n1.confidence == "high"
 
 
 def test_blocking_call_in_async(tmp_path):
