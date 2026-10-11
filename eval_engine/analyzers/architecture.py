@@ -770,7 +770,8 @@ class ArchitectureAnalyzer(Analyzer):
         reads = {f: self._env_reads(ctx, f) for f in ctx.files_with_suffix(*SOURCE_EXTS) if not _is_exempt(f)}
         readers = [f for f, n in reads.items() if n]
         central = [f for f in readers if _named(f, CONFIG_NAMES) and reads[f] >= 3]
-        outside = [f for f in readers if f not in central]
+        central_set = set(central)
+        outside = [f for f in readers if f not in central_set]
         if len(readers) >= CONFIG_SPRAWL_FILES and len(outside) >= CONFIG_SPRAWL_FILES // 2:
             return [self._f(
                 ctx, "architecture.config-sprawl", f"Environment variables read in {len(readers)} files",

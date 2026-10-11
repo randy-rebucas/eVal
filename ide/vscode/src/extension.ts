@@ -641,8 +641,16 @@ class EvalExtension implements vscode.Disposable {
   private codeActions(doc: vscode.TextDocument, range: vscode.Range | vscode.Selection,
     context: vscode.CodeActionContext): vscode.CodeAction[] {
     const actions: vscode.CodeAction[] = [];
+    const byLine = new Map<number, vscode.Diagnostic[]>();
+    for (const d of context.diagnostics) {
+      if (d.source === SOURCE) {
+        const line = d.range.start.line;
+        const arr = byLine.get(line);
+        if (arr) arr.push(d); else byLine.set(line, [d]);
+      }
+    }
     for (const f of this.findingsAt(doc, range.start.line, range.end.line)) {
-      const related = context.diagnostics.filter((d) => d.source === SOURCE && d.range.start.line === lineSpan(f).start);
+      const related = byLine.get(lineSpan(f).start) || [];
       const add = (title: string, command: string, args: unknown[], preferred = false) => {
         const a = new vscode.CodeAction(title, vscode.CodeActionKind.QuickFix);
         a.command = { title, command, arguments: args };
