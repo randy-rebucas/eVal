@@ -27,7 +27,7 @@ explanation of what to do about it.
 
 eVal Local runs the entire audit on the developer's computer:
 
-1. **Static analysis:** 21 analyzers (Ruff, Bandit, mypy, ESLint, TypeScript, Semgrep, Trivy, plus built-in
+1. **Static analysis:** 23 analyzers (Ruff, Bandit, mypy, ESLint, TypeScript, Semgrep, Trivy, plus built-in
    checks for secrets, API security and authorization, database access and schema design, DevOps/CI and
    observability, tests, dependencies, architecture, performance and scalability, and configuration assumptions) produce findings with file, line, evidence and severity. The code is never executed.
 2. **Deterministic scoring:** documented, reproducible scores per category and overall. Categories that

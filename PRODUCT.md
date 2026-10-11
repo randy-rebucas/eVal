@@ -39,13 +39,13 @@ Each of those concerns maps to concrete checks:
 | Missing tests | `testing`, `ai_code` (tests that cannot fail) |
 | Hidden technical debt | `maintainability`, `ai_code` (stubs, placeholders) |
 | Poor error handling | swallowed exceptions (Python and JS), exception text or stack traces returned to clients, no global error handler |
-| Performance and scalability | `performance`: N+1 queries, unbounded queries, blocking calls, missing timeouts, process-local state, in-memory session stores, local-disk uploads |
-| Dependency risks | `dependencies`, `osv`, `registry`, `ai_code` (hallucinated and lookalike packages), reachability |
-| Poor observability | `devops`: no logging, metrics, tracing/error tracking, request ids, or health endpoint; print/console logging in server code |
-| DevOps weaknesses | `devops`: Dockerfile, Compose and CI workflow hardening, missing CI |
+| Performance and scalability | `performance` (static risk): network calls repeated in loops, nested-loop lookups, blocking calls, missing timeouts, memory-heavy reads and large body limits, unbounded caches, inefficient serialization, process-local state, in-memory session stores, local-disk uploads. `database`: N+1 queries, unbounded queries, missing pagination |
+| Dependency risks | `dependencies` (hygiene, duplicates, conflicts, lockfile drift, unused packages), `osv` (vulnerabilities), `registry` (existence, age, major versions behind), `ai_code` (hallucinated and lookalike packages), reachability |
+| Poor observability | `observability`: structured logging, error tracking, tracing, metrics, request ids, health endpoints, audit logs, background-job monitoring; print/console logging in server code |
+| DevOps weaknesses | `devops`: Dockerfile, Compose, Kubernetes and CI workflow hardening, missing CI or CI without tests, resource limits, debug settings and dev servers in deployment files, deploys without a test gate, mutable image tags, rollback strategy, environment separation |
 | Undocumented assumptions | `configuration`: environment variables missing from .env.example and docs, hardcoded local or private endpoints, machine-specific paths, HTTP APIs without an OpenAPI contract |
 
-All of these are static checks. Scalability and performance findings are estimates, not measurements.
+All of these are static checks. Scalability and performance findings are static risks, not measurements: reports state separately that measured performance (benchmarks, load tests, profiling) was not assessed.
 
 Success means a team knows what is risky in its code, why it is risky, who owns each accepted risk, and whether a change made things worse. Those answers have to rest on evidence the team can check.
 
@@ -76,7 +76,7 @@ eVal is honest by mechanism, not by tone:
 ## Capabilities and Constraints
 
 - Stack: Flask + Jinja templates, Bootstrap 5.3 and Bootstrap Icons from the jsDelivr CDN with SRI, one `app.css` and one `app.js`. Server-rendered, with a CSRF-protected form flow.
-- 21 analyzers (Ruff, Bandit, mypy, ESLint, tsc, Semgrep, Trivy, OSV.dev, PyPI/npm registry checks, plus built-in checks). Tenant isolation applies to every query.
+- 23 analyzers (Ruff, Bandit, mypy, ESLint, tsc, Semgrep, Trivy, OSV.dev, PyPI/npm registry checks, plus built-in checks). Tenant isolation applies to every query.
 - Accepted risks need a reason, an owner (a team or vendor) and a review date at most `EVAL_ACCEPTED_RISK_MAX_DAYS` away. They reopen on that date.
 - Deliberately not built: automated fix PRs. AI patches are only displayed.
 - Not built yet: GitHub App/webhooks, org policies, knowledge-graph visualization, PDF export, email invites/verification, password reset, MFA, SSO. Billing and metering are also not built. See docs/ROADMAP.md.

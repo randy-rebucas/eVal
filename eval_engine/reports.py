@@ -18,10 +18,19 @@ DISCLAIMER = (
     "readiness. Absence of findings does not mean absence of vulnerabilities. Static estimates are not "
     "measurements; potential risks require human verification."
 )
+# Performance findings are read from the code, never measured; reports keep the two apart explicitly.
+PERFORMANCE_BASIS = {
+    "static_risk": "Assessed. Performance findings are static risks found by reading the code (N+1 queries, "
+                   "unbounded queries, network calls in loops, blocking calls, nested-loop lookups, memory-heavy "
+                   "reads, inefficient serialization). They indicate where cost grows with data or load, not how "
+                   "fast the application is.",
+    "measured_performance": "Not assessed. No benchmarks, load tests or profiling were executed, so there are no "
+                            "measured latencies, throughput or memory figures in this report.",
+}
 KIND_LABELS = {
     "confirmed": "Confirmed",
     "potential": "Potential risk",
-    "estimate": "Static estimate",
+    "estimate": "Static risk (estimate)",
     "ai_observation": "AI observation (unscored)",
 }
 FORMATS = ("json", "md", "html", "sarif")
@@ -129,6 +138,7 @@ def render_json(model: dict) -> str:
     out = dict(model)
     out["meta"] = _meta(model)
     out["disclaimer"] = DISCLAIMER
+    out["performance_basis"] = PERFORMANCE_BASIS
     out["compliance"] = {"note": COMPLIANCE_NOTE, "controls": _compliance_summary(model)}
     return json.dumps(out, indent=2, sort_keys=False, default=str)
 
@@ -153,6 +163,8 @@ def render_markdown(model: dict) -> str:
         label = CATEGORY_LABELS.get(Category(name), name)
         score_txt = "—" if cs.get("score") is None else f"{cs['score']:.0f}"
         lines.append(f"| {label} | {score_txt} | {cs.get('risk')} | {cs.get('findings', 0)} |")
+    lines += ["", f"**Performance — Static Risk:** {PERFORMANCE_BASIS['static_risk']}", "",
+              f"**Performance — Measured Performance:** {PERFORMANCE_BASIS['measured_performance']}"]
     counts = scores.get("severity_counts") or {}
     if _offline_text(model):
         lines += ["", f"**{_md(_offline_text(model))}**"]
@@ -258,6 +270,8 @@ def render_html(model: dict) -> str:
         parts.append(f"<tr><td>{e(label)}</td><td>{score_txt}</td><td>{e(str(cs.get('risk')))}</td>"
                      f"<td>{cs.get('findings', 0)}</td><td>{e(cs.get('ceiling_reason', ''))}</td></tr>")
     parts.append("</table>")
+    parts.append(f"<p class='muted'><b>Performance — Static Risk:</b> {e(PERFORMANCE_BASIS['static_risk'])}<br>"
+                 f"<b>Performance — Measured Performance:</b> {e(PERFORMANCE_BASIS['measured_performance'])}</p>")
     if _offline_text(model):
         parts.append(f"<p class='note'>{e(_offline_text(model))}</p>")
     tools = model.get("tools") or []

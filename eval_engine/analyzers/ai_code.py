@@ -16,6 +16,7 @@ The registry existence check (does the declared package exist at all?) needs the
 from __future__ import annotations
 
 import ast
+import json
 import os
 import re
 import sys
@@ -474,11 +475,12 @@ NEW_PACKAGE_DAYS = 30
 
 @register
 class RegistryAnalyzer(Analyzer):
-    """Checks that declared dependencies exist on PyPI / npm and are not brand new. Sends only package names.
+    """Checks that declared dependencies exist on PyPI / npm, are not brand new, and are not major versions behind
+    the latest release. Sends only package names; versions are compared locally.
     Disable with EVAL_REGISTRY_CHECK_ENABLED=0; skipped for projects that configure a private package index."""
 
     name = "registry"
-    title = "Dependency existence (PyPI / npm)"
+    title = "Dependency registry checks (existence, age, outdated)"
     categories = (Category.DEPENDENCIES,)
     network_use = "pypi.org / registry.npmjs.org: names of declared dependencies (no source code, no versions)"
 
@@ -513,11 +515,12 @@ class RegistryAnalyzer(Analyzer):
                                                                            if m.endswith("package.json")]))]
         return self.check(ctx, packages[:MAX_REGISTRY_PACKAGES])
 
-    def check(self, ctx, packages, session=None, now: datetime | None = None):
+    def check(self, ctx, packages, session=None, now: datetime | None = None, versions=None):
         import requests
 
         http = session or requests
         now = now or datetime.now(UTC)
+        versions = declared_versions(ctx) if versions is None else versions
 
         def lookup(item):
             eco, name = item
@@ -525,22 +528,23 @@ class RegistryAnalyzer(Analyzer):
             try:
                 r = http.get(url, timeout=(5, 15), headers={"Accept": "application/json"})
             except requests.RequestException:
-                return item, "error", None
+                return item, "error", None, None
             if r.status_code == 404:
-                return item, "missing", None
+                return item, "missing", None, None
             if r.status_code != 200:
-                return item, "error", None
+                return item, "error", None, None
             try:
-                return item, "ok", _first_release(eco, r.json())
-            except (ValueError, KeyError, TypeError):
-                return item, "ok", None
+                data = r.json()
+                return item, "ok", _first_release(eco, data), _latest_version(eco, data)
+            except (ValueError, KeyError, TypeError, AttributeError):
+                return item, "ok", None, None
 
         with ThreadPoolExecutor(max_workers=8) as pool:
             results = list(pool.map(lookup, packages))
-        if results and all(status == "error" for _, status, _ in results):
+        if results and all(status == "error" for _, status, _, _ in results):
             raise AnalyzerError("package registries could not be reached (dependency existence not checked)")
-        out = []
-        for (eco, name), status, created in results:
+        out = self._outdated(ctx, results, versions)
+        for (eco, name), status, created, _ in results:
             src = next((m for m in ctx.languages.manifests if name in (ctx.read(m) or "").lower()),
                        ctx.languages.manifests[0])
             line = next((i for i, ln in enumerate(ctx.lines(src), 1) if name in ln.lower()), None)
@@ -565,6 +569,56 @@ class RegistryAnalyzer(Analyzer):
                     remediation="Verify the publisher and source repository before depending on it, and pin an "
                     "exact version.", file_path=src, line=line))
         return out
+
+    def _outdated(self, ctx, results, versions):
+        """One finding per manifest listing dependencies at least one major version (minor, for 0.x) behind."""
+        from .dependencies import version_tuple
+
+        behind: dict[str, list[str]] = {}
+        for (eco, name), status, _, latest in results:
+            current, src = versions.get((eco, name.lower()), (None, None))
+            cur, new = version_tuple(current or ""), version_tuple(latest or "")
+            if status != "ok" or not cur or not new:
+                continue
+            level = 0 if cur[0] > 0 or new[0] > 0 else 1  # 0.x: a minor bump is the breaking change
+            if len(cur) > level and len(new) > level and new[level] > cur[level] and new[:level] >= cur[:level]:
+                behind.setdefault(src, []).append(f"{name} {current} → {latest}")
+        return [self.finding(
+            ctx, rule="dependencies.outdated", title=f"{len(items)} dependency(ies) are major versions behind",
+            category=Category.DEPENDENCIES, severity=Severity.LOW, confidence=Confidence.HIGH,
+            kind=FindingKind.CONFIRMED,
+            description=f"The versions used in {src} are at least one major release behind the latest on the public "
+            "registry. Old majors stop receiving security fixes, and the longer an upgrade waits the bigger it gets.",
+            remediation="Plan upgrades (read the changelogs for breaking changes) and keep them current with "
+            "Dependabot or Renovate.", file_path=src, evidence="; ".join(items[:20]))
+            for src, items in sorted(behind.items())]
+
+
+def declared_versions(ctx) -> dict[tuple[str, str], tuple[str, str]]:
+    """(ecosystem, lower-case name) -> (version in use, source file): exact pins and lockfile versions, else the
+    lower bound of a package.json range."""
+    from .dependencies import collect_pinned
+
+    out: dict[tuple[str, str], tuple[str, str]] = {}
+    for eco, name, ver, src in collect_pinned(ctx):
+        out.setdefault((eco, name.lower()), (ver, src))
+    for rel in (m for m in ctx.languages.manifests if m.endswith("package.json")):
+        try:
+            data = json.loads(ctx.read(rel) or "{}")
+        except json.JSONDecodeError:
+            continue
+        for key in ("dependencies", "devDependencies"):
+            section = data.get(key) if isinstance(data, dict) else None
+            for name, spec in (section.items() if isinstance(section, dict) else []):
+                if isinstance(spec, str) and (m := re.fullmatch(r"[\^~=v]*(\d+(?:\.\d+){0,2})", spec.strip())):
+                    out.setdefault(("npm", name.lower()), (m.group(1), rel))
+    return out
+
+
+def _latest_version(eco: str, data: dict) -> str | None:
+    if eco == "npm":
+        return (data.get("dist-tags") or {}).get("latest")
+    return (data.get("info") or {}).get("version")
 
 
 def _first_release(eco: str, data: dict) -> datetime | None:

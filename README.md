@@ -36,7 +36,7 @@ indicators, and categories it could not assess are shown as *not assessed*.
 - Users, organizations, roles (viewer/member/admin/owner), projects, tenant isolation on every query
 - GitHub repositories (public, or private via encrypted tokens) with branch/commit selection; ZIP uploads
 - Asynchronous audits on Celery + Redis with live progress and cancellation
-- 22 analyzers: Ruff, Bandit, mypy, ESLint, TypeScript, Semgrep, Trivy, OSV.dev, PyPI/npm registry checks, and
+- 23 analyzers: Ruff, Bandit, mypy, ESLint, TypeScript, Semgrep, Trivy, OSV.dev, PyPI/npm registry checks, and
   built-in checks for secrets, **API security and design** (authentication, object-level authorization/IDOR,
   request-body validation, error disclosure and handling, error responses sent with HTTP 200, inconsistent error
   formats, idempotency of payment/order endpoints and payment-provider calls, versioning, rate limiting, cookie
@@ -48,14 +48,20 @@ indicators, and categories it could not assess are shown as *not assessed*.
   and Mongoose models plus every migration; missing indexes, N+1 queries and lazy loads, unbounded queries and
   unpaginated list endpoints, destructive and locking migrations, missing or inconsistent foreign keys and
   relationships, duplicated data, transaction handling, lost updates and check-then-insert races),
-  DevOps/CI and observability (metrics, tracing, request ids, logging),
+  **DevOps** (Dockerfile, Compose, Kubernetes and GitHub Actions hardening: secrets in images, containers running as
+  root, missing health checks and resource limits, CI without tests, debug settings and development servers in
+  deployment files, deploys without a test gate, mutable image tags, missing rollback strategy and environment
+  separation), **observability** (structured logging, error tracking, tracing, metrics, request ids, health
+  endpoints, audit logs, background-job monitoring),
   **testing** (missing tests per language, test-to-code ratio, missing API and integration tests, untested
   critical paths such as auth and payments, untested error paths, assertion-free and weak assertions, duplicated
   test setup), dependencies, maintainability (including swallowed errors), **architecture** (module and package
   cycles, coupling, dependency direction between layers, service and feature boundaries, business logic and
   database access in request handlers, scattered data access, oversized modules and packages, flat layouts,
-  duplicated business logic, configuration sprawl), performance
-  and scalability (static estimates), **configuration assumptions** (undocumented environment variables,
+  duplicated business logic, configuration sprawl), **performance** and scalability as static risk (network calls in
+  loops, nested-loop lookups, blocking calls, missing timeouts, memory-heavy reads, unbounded caches, inefficient
+  serialization, process-local state; nothing is benchmarked, and reports say measured performance was not
+  assessed), **configuration assumptions** (undocumented environment variables,
   hardcoded local endpoints and paths, APIs without an OpenAPI contract), **taint analysis** (request data
   reaching SQL, shell, eval, file paths, upload destinations, pickle/YAML deserialization, outbound URLs,
   templates, redirects) and **AI-generated-code patterns**
@@ -150,12 +156,25 @@ issues live in `tests/fixtures/` (excluded from linting and test collection).
 ### Dependency findings and suggested fixes
 
 eVal checks dependency manifests and lockfiles without installing packages or executing repository code.
-The built-in hygiene checks flag unpinned Python requirements, Python projects without a lockfile, JavaScript
-projects without a lockfile, VCS/URL requirements, and wildcard or non-registry JavaScript version specifiers.
-For known vulnerabilities, OSV.dev checks exact package versions collected from `requirements*.txt`,
-`poetry.lock`, `uv.lock`, and `package-lock.json`. It sends only ecosystem, package name, and version to OSV.dev;
-set `EVAL_OSV_ENABLED=0` to disable this lookup. Trivy can provide an additional filesystem scan for
-vulnerabilities when installed and enabled on the worker.
+Supported files: `requirements*.txt`, `pyproject.toml` (PEP 621, PEP 735 groups and Poetry), `package.json`,
+`package-lock.json`, `yarn.lock` (classic and Berry), `pnpm-lock.yaml` (v5, v6, v9), `Pipfile.lock`, `poetry.lock`
+and `uv.lock`.
+
+- **Hygiene:** unpinned Python requirements, Python and JavaScript projects without a lockfile, VCS/URL
+  requirements, wildcard or non-registry JavaScript version specifiers.
+- **Duplicates:** a package declared twice (in one file, or in both `dependencies` and `devDependencies`), and
+  packages a lockfile resolves to several versions.
+- **Conflicts:** a package pinned to different versions in requirements files of one project, pins or lockfile
+  versions that violate the `pyproject.toml` constraint, a lockfile out of sync with `package.json`, and several
+  lockfiles for one project.
+- **Unused:** runtime dependencies that no file in the repository imports, requires or mentions.
+- **Outdated:** the `registry` analyzer compares the versions in use with the latest release on PyPI/npm (it
+  already looks each package up by name; versions are compared locally) and lists dependencies at least one major
+  version behind.
+- **Vulnerable:** OSV.dev checks exact package versions collected from the files above. It sends only ecosystem,
+  package name, and version; set `EVAL_OSV_ENABLED=0` to disable this lookup. Trivy can provide an additional
+  filesystem scan when installed and enabled on the worker. Vulnerabilities are reported only with scanner
+  evidence.
 
 Each finding includes its source file, evidence such as the affected package and pinned version, an advisory
 reference when available, and a remediation recommendation. When an advisory publishes a fixed version, the
@@ -231,7 +250,7 @@ All configuration is via environment variables (`.env.example` documents each). 
 | `GITHUB_APP_ID`, `GITHUB_APP_SLUG`, `GITHUB_APP_PRIVATE_KEY` (or `_FILE`), `GITHUB_APP_WEBHOOK_SECRET`, `GITHUB_APP_CLIENT_ID`, `GITHUB_APP_CLIENT_SECRET` | GitHub App for automatic PR audits and check runs (see [docs/CI.md](docs/CI.md#c-github-app-automatic-pull-request-checks)) |
 | `EVAL_PUBLIC_URL` | public base URL, for links the worker builds (check runs, notifications) |
 | `EVAL_OSV_ENABLED` | dependency vulnerability lookup via OSV.dev (sends package names/versions only) |
-| `EVAL_REGISTRY_CHECK_ENABLED` | check that declared dependencies exist on PyPI/npm and are not brand new (sends package names only) |
+| `EVAL_REGISTRY_CHECK_ENABLED` | check that declared dependencies exist on PyPI/npm, are not brand new, and are not major versions behind (sends package names only) |
 | `EVAL_SEMGREP_CONFIG` | Semgrep rules (registry pack or local path for air-gapped installs) |
 | `EVAL_TRIVY_CACHE_DIR` | persistent Trivy DB cache |
 | `EVAL_AI_ALLOWED_BASE_URLS` | allow-list for OpenAI-compatible endpoints (local models) |

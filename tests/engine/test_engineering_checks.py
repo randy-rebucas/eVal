@@ -227,9 +227,10 @@ def test_observability_gaps_reported_for_web_service(tmp_path):
     write(tmp_path, {"requirements.txt": "flask\n", "app.py": (
         "from flask import Flask\napp = Flask(__name__)\n"
         "@app.get('/health')\ndef health():\n    print('health check')\n    return 'ok'\n")})
-    found = rules("devops", tmp_path)
-    assert {"eval:devops.no-metrics", "eval:devops.no-tracing", "eval:devops.no-request-id",
-            "eval:devops.print-logging"} <= found
+    found = rules("observability", tmp_path)
+    assert {"eval:devops.no-metrics", "eval:devops.no-tracing", "eval:devops.no-error-tracking",
+            "eval:devops.no-request-id", "eval:devops.print-logging"} <= found
+    assert "eval:devops.no-health-endpoint" not in found
 
 
 def test_observability_satisfied(tmp_path):
@@ -238,17 +239,19 @@ def test_observability_satisfied(tmp_path):
         "@app.get('/health')\ndef health():\n"
         "    log.info('ok', extra={'request_id': request.headers.get('X-Request-ID')})\n"
         "    return 'ok'\n")})
-    found = rules("devops", tmp_path)
-    assert not found & {"eval:devops.no-metrics", "eval:devops.no-tracing", "eval:devops.no-request-id",
+    found = rules("observability", tmp_path)
+    assert not found & {"eval:devops.no-metrics", "eval:devops.no-error-tracking", "eval:devops.no-request-id",
                         "eval:devops.print-logging"}
+    # Sentry reports errors but is not a tracer unless performance tracing is configured.
+    assert "eval:devops.no-tracing" in found
 
 
 def test_console_logging_ok_when_logger_library_present(tmp_path):
     write(tmp_path, {"package.json": '{"dependencies": {"express": "4.19.2", "pino": "9.0.0"}}',
                      "server.js": "app.get('/x', (req, res) => { console.log('hit'); res.end(); });\n"})
-    assert "eval:devops.print-logging" not in rules("devops", tmp_path)
+    assert "eval:devops.print-logging" not in rules("observability", tmp_path)
     write(tmp_path, {"package.json": '{"dependencies": {"express": "4.19.2"}}'})
-    assert "eval:devops.print-logging" in rules("devops", tmp_path)
+    assert "eval:devops.print-logging" in rules("observability", tmp_path)
 
 
 # ------------------------------------------------------------------------------- configuration / assumptions

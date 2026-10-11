@@ -43,6 +43,7 @@ def _load_builtin() -> None:
         eslint,
         maintainability,
         mypy_,
+        observability,
         performance,
         ruff,
         secrets,

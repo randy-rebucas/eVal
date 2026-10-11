@@ -55,9 +55,9 @@ eval_engine/
     base.py          Analyzer interface + AnalyzerContext + AnalyzerOutcome
     registry.py      Registration and selection by language / availability
     ruff.py, bandit.py, mypy_.py, eslint.py, tsc.py, semgrep.py, trivy.py   (external tools)
-    secrets.py, devops.py, testing.py, database.py, api_security.py,
-    dependencies.py, maintainability.py, architecture.py, performance.py,
-    configuration.py, taint.py, ai_code.py                                  (built-in)
+    secrets.py, devops.py, observability.py, testing.py, database.py,
+    api_security.py, dependencies.py, maintainability.py, architecture.py,
+    performance.py, configuration.py, taint.py, ai_code.py                  (built-in)
     db_model.py      Schema model: ORM models + replayed migrations (used by database.py)
     db_migrations.py Migration parsing: SQL, Alembic, Django, knex, Sequelize → operations
     db_checks.py     Schema and migration checks, engine-aware
