@@ -23,6 +23,7 @@ def is_test_path(path: str) -> bool:
     return (
         any(p in _TEST_DIRS for p in parts[:-1])
         or name.startswith("test_")
+        or name == "tests.py"  # Django's per-app test module
         or name.endswith(("_test.py", "_test.go", "conftest.py"))
         or ".test." in name
         or ".spec." in name
