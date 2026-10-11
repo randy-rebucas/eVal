@@ -17,6 +17,11 @@ eVal server through the JSON API v1 (`docs/API.md`) with a personal API token.
 - **Status bar**: score and risk level of the loaded audit. A history icon means the audit is of a different
   commit than your checkout, so line numbers may be off.
 - Findings reload automatically when you switch branch, pull or commit.
+- **Apply Fix Proposal.** Pick one of the repository's AI fixes (as generated, or edited by hand in eVal), or
+  paste a fix link. The fix is applied only if every change still matches your files exactly, though changes may
+  sit on different lines than in the audited commit. VS Code's refactor preview shows each edit before anything is
+  written, and nothing is saved for you. Then run your tests in the terminal and commit. The **Apply in VS Code
+  desktop** link on a fix page runs the same command, and so does **Open in Codespaces** followed by this command.
 
 ## Which audit is shown
 

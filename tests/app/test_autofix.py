@@ -100,6 +100,9 @@ def test_fix_github_repo_opens_pull_request(ai_on, db, fake_github, monkeypatch)
     c.post(f"/o/{org}/findings/{sql.id}/fix")  # single-finding button
     fix = db.session.execute(db.select(FixProposal)).scalar_one()
     assert fix.status == "ready" and fix.files[0]["blob_sha"] == "blob-app.py"
+    page = c.get(f"/o/{org}/fixes/{fix.id}").data.decode()
+    assert 'href="https://codespaces.new/octo/shop/tree/main"' in page  # the audited branch, before a PR exists
+    assert f'href="vscode://randy-rebucas.eval-auditor/applyFix?id={fix.id}"' in page
     assert ("GET", "/repos/octo/shop/contents/app.py", "Bearer ghp_validtoken1234567890") in fake_github["calls"]
 
     resp = c.post(f"/o/{org}/fixes/{fix.id}/pull-request")
@@ -115,7 +118,11 @@ def test_fix_github_repo_opens_pull_request(ai_on, db, fake_github, monkeypatch)
     # A published fix cannot be pushed twice.
     c.post(f"/o/{org}/fixes/{fix.id}/pull-request")
     assert len(fake_github["writes"]) == 3
-    assert b"View PR #7" in c.get(f"/o/{org}/fixes/{fix.id}").data
+    page = c.get(f"/o/{org}/fixes/{fix.id}").data.decode()
+    assert "View PR #7" in page
+    # Once published, the browser IDEs open the fix's own branch, which already has the change.
+    assert f'href="https://codespaces.new/octo/shop/tree/{fix.branch}"' in page
+    assert f'href="https://github.dev/octo/shop/tree/{fix.branch}"' in page and "Apply in VS Code" not in page
 
 
 def test_fix_that_introduces_a_finding_is_flagged_and_gated(ai_on, db, fake_github, monkeypatch):
@@ -273,6 +280,38 @@ def test_hand_edit_needs_member_open_fix_and_tenant(ai_on, bob, db, app):
     assert b"not been opened as a pull request" in _edit(c, org, fix, after).data
     db.session.refresh(fix)
     assert fix.revisions == []
+
+
+def test_fix_api_hands_the_patch_to_an_editor(ai_on, bob, db):
+    from tests.app.test_api_pr import auth, new_token
+
+    c, org = ai_on["client"], ai_on["org"]
+    fix = _ready_fix(ai_on, db)
+    _edit(c, org, fix, fix.files[0]["after"] + "# reviewed\n")
+    db.session.refresh(fix)
+    raw = new_token(c, org)
+    listed = c.get(f"/api/v1/repositories/{fix.audit.repository_id}/fixes", headers=auth(raw)).get_json()["fixes"]
+    assert [(f["id"], f["status"], f["revision"], f["edited"], f["verdict"], f["files"]) for f in listed] == \
+        [(str(fix.id), "ready", 2, True, "passed", ["app.py"])]
+    detail = c.get(f"/api/v1/fixes/{fix.id}", headers=auth(raw)).get_json()["fix"]
+    assert detail["patches"] == [{"path": "app.py", "diff": fix.diff}]
+    assert detail["commit_sha"] == fix.audit.commit_sha and detail["url"].endswith(f"/fixes/{fix.id}")
+    assert detail["findings"][0]["changed"] and detail["findings"][0]["title"]
+    assert detail["ide_links"] == {}  # uploaded archive: no GitHub branch to open
+    # Another organization's token sees nothing.
+    other = new_token(bob["client"], bob["org"])
+    assert c.get(f"/api/v1/fixes/{fix.id}", headers=auth(other)).status_code == 404
+    assert c.get(f"/api/v1/repositories/{fix.audit.repository_id}/fixes", headers=auth(other)).status_code == 404
+
+
+def test_file_patches_split_a_multi_file_diff(app):
+    from types import SimpleNamespace
+
+    from eval_app.fixes.services import file_patches, unified_diff
+
+    a, b = unified_diff("a b.py", "x = 1\n", "x = 2\n"), unified_diff("pkg/c.py", "y\n", "z\n")
+    proposal = SimpleNamespace(diff=a + b, files=[{"path": "a b.py"}, {"path": "pkg/c.py"}])
+    assert file_patches(proposal) == [{"path": "a b.py", "diff": a}, {"path": "pkg/c.py", "diff": b}]
 
 
 def test_fix_page_is_tenant_scoped(ai_on, bob, db):

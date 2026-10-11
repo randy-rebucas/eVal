@@ -10,7 +10,7 @@ from eval_engine.reports import CONTENT_TYPES, FORMATS, render
 from ..audits.services import AuditError, create_audit, create_pr_audit
 from ..extensions import db
 from ..findings import services as findings_service
-from ..models import Audit, Finding, Project, Repository
+from ..models import Audit, Finding, FixProposal, Project, Repository
 from ..projects import repositories as repo_service
 from ..security.tenancy import get_scoped_or_404, scoped_select
 from .auth import api_auth
@@ -72,6 +72,49 @@ def repository(repo_id):
     audits = db.session.execute(scoped_select(Audit).where(Audit.repository_id == repo.id)
                                 .order_by(Audit.created_at.desc()).limit(20)).scalars()
     return jsonify(repository=_repo_json(repo), audits=[_audit_json(a) for a in audits])
+
+
+def _fix_json(p: FixProposal, detail: bool = False) -> dict:
+    from ..fixes import services as fixes
+
+    a = p.audit
+    data = {
+        "id": str(p.id), "audit_id": str(a.id), "repository_id": str(a.repository_id), "status": p.status,
+        "branch": a.branch, "commit_sha": a.commit_sha, "revision": fixes.current_revision(p), "edited": p.is_edited,
+        "verdict": (p.verification or {}).get("verdict") or None, "files": [f["path"] for f in p.files],
+        "fixed": len(p.results.get("fixed", [])), "not_changed": len(p.results.get("failed", [])),
+        "ai_model": p.ai_model, "pr_url": p.pr_url or None, "fix_branch": p.branch or None,
+        "created_at": p.created_at.isoformat(),
+        "url": url_for("fixes.detail", org_slug=g.org.slug, fix_id=p.id, _external=True),
+    }
+    if detail:
+        findings = {str(f.id): f for f in fixes.proposal_findings(p)}
+        data.update(
+            error=p.error, patches=fixes.file_patches(p), verification=p.verification or {},
+            findings=[{"id": i["id"], "changed": "files" in i, "note": i.get("summary") or i.get("reason", ""),
+                       **({"title": findings[i["id"]].title, "severity": findings[i["id"]].severity,
+                           "location": findings[i["id"]].location} if i["id"] in findings else {})}
+                      for i in p.results.get("fixed", []) + p.results.get("failed", [])],
+            ide_links=fixes.ide_links(p))
+    return data
+
+
+@bp.get("/repositories/<repo_id>/fixes")
+@api_auth()
+def repository_fixes(repo_id):
+    """The repository's newest AI fix proposals (20), newest first."""
+    repo = get_scoped_or_404(Repository, repo_id)
+    rows = db.session.execute(scoped_select(FixProposal).join(Audit, FixProposal.audit_id == Audit.id)
+                              .where(Audit.repository_id == repo.id)
+                              .order_by(FixProposal.created_at.desc()).limit(20)).scalars()
+    return jsonify(fixes=[_fix_json(p) for p in rows])
+
+
+@bp.get("/fixes/<fix_id>")
+@api_auth()
+def fix(fix_id):
+    """One fix proposal with a unified diff per file, for applying it in an editor."""
+    return jsonify(fix=_fix_json(get_scoped_or_404(FixProposal, fix_id), detail=True))
 
 
 @bp.post("/repositories/<repo_id>/audits")

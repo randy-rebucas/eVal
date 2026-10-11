@@ -44,6 +44,19 @@ Repository: `{"id", "project_id", "name", "source": "github"|"upload", "full_nam
 ### `GET /api/v1/repositories/{repo_id}`
 `{"repository": Repository, "audits": [Audit]}` — the 20 most recent audits.
 
+### `GET /api/v1/repositories/{repo_id}/fixes`
+The repository's 20 newest AI fix proposals, newest first: `{"fixes": [Fix]}`.
+Fix: `{"id", "audit_id", "repository_id", "status": "queued"|"running"|"verifying"|"ready"|"failed"|"pr_opened",
+"branch", "commit_sha", "revision", "edited", "verdict": "passed"|"partial"|"regressed"|"incomplete"|"error"|null,
+"files": ["path"], "fixed", "not_changed", "ai_model", "pr_url", "fix_branch", "created_at", "url"}`.
+`branch` and `commit_sha` are the audited ones, and `fix_branch` is the `eval/fix-…` branch once a pull request is open.
+
+### `GET /api/v1/fixes/{fix_id}`
+`{"fix": Fix + {"error", "patches": [{"path", "diff"}], "verification", "findings": [{"id", "changed", "note",
+"title", "severity", "location"}], "ide_links": {"codespaces", "github_dev"}}}`. Each `diff` is a unified diff of
+one file against the audited commit (as in the `.patch` download), for applying the fix in an editor. `ide_links`
+is empty except for github.com repositories.
+
 ### `POST /api/v1/repositories/{repo_id}/audits` (member)
 * GitHub repository: JSON body `{"ref": "main"}` (branch, tag or commit SHA; default branch if omitted).
 * Upload repository: `multipart/form-data` with an `archive` field containing a `.zip`.
