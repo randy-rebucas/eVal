@@ -179,8 +179,11 @@ def run_generation(proposal: FixProposal, provider=None) -> None:
 VERIFY_SKIP = {"osv", "trivy"}
 
 
-def run_verification(proposal: FixProposal, targets: list[Finding]) -> dict:
-    """Re-audit the audited tree with the proposal's files applied; never raises."""
+def run_verification(proposal: FixProposal, targets: list[Finding], wanted_ids: set[str] | None = None) -> dict:
+    """Re-audit the audited tree with the proposal's files applied; never raises.
+
+    ``wanted_ids`` are the findings the change should remove; by default, the ones the AI reported as fixed.
+    """
     from eval_engine.verify import BaselineFinding, select_analyzers, verify_patch
     from eval_engine.workspace import remove_tree
 
@@ -190,7 +193,7 @@ def run_verification(proposal: FixProposal, targets: list[Finding]) -> dict:
     audit = proposal.audit
     cfg = current_app.config
     files = {f["path"]: f["after"] for f in proposal.files}
-    fixed = {i["id"] for i in proposal.results.get("fixed", [])}
+    fixed = wanted_ids if wanted_ids is not None else {i["id"] for i in proposal.results.get("fixed", [])}
     baseline = [BaselineFinding(fingerprint=f.fingerprint, rule_id=f.rule_id, file_path=f.file_path, title=f.title,
                                 severity=f.severity, line_start=f.line_start, id=str(f.id), sources=list(f.sources))
                 for f in db.session.execute(db.select(Finding).where(Finding.audit_id == audit.id,
@@ -222,6 +225,101 @@ def run_verification(proposal: FixProposal, targets: list[Finding]) -> dict:
         remove_tree(workdir)
 
 
+# ------------------------------------------------------------------------------------------------- edit
+MAX_REVISIONS = 20
+
+
+def current_revision(proposal: FixProposal) -> int:
+    """The revision a person is looking at: 1 is the AI's output, each saved edit adds one."""
+    return len(proposal.revisions or []) or 1
+
+
+def _revision(proposal: FixProposal, kind: str, author, at) -> dict:
+    return {"number": len(proposal.revisions or []) + 1, "kind": kind,
+            "author_id": str(author.id) if author else "", "author": author.email if author else "",
+            "at": at.isoformat() if at else "", "diff": proposal.diff, "verdict": ""}
+
+
+def save_edits(org: Organization, proposal: FixProposal, edited: dict[str, str], base_revision: int, user) -> None:
+    """Replace the proposal's files with a person's edits, keep the previous diff as a revision, and queue a
+    re-audit of the result. Only files already in the proposal can be edited."""
+    if proposal.status != "ready":
+        raise FixError("Only a generated fix that has not been opened as a pull request can be edited.")
+    if base_revision != current_revision(proposal):
+        raise FixError("This fix changed since you opened it. Reload the page and make your edits again.")
+    known = {f["path"]: f for f in proposal.files}
+    if not edited or set(edited) - set(known):
+        raise FixError("Only the files in this fix can be edited.")
+    if any(len(text.encode("utf-8")) > MAX_SOURCE_BYTES for text in edited.values()):
+        raise FixError(f"Edited files must be at most {MAX_SOURCE_BYTES // 1024} KB.")
+    if len(proposal.revisions or []) >= MAX_REVISIONS:
+        raise FixError(f"This fix already has {MAX_REVISIONS} revisions. Download the patch and continue locally.")
+    if not ratelimit.hit("fix-edit", str(org.id), 60, 3600):
+        raise FixError("Too many fix edits this hour; try again later.")
+    sources, _, problems = read_sources(proposal.audit, set(known))
+    if problems:
+        path, reason = sorted(problems.items())[0]
+        raise FixError(f"Could not read {path} from the audited commit again: {reason}")
+    files = []
+    for path in sorted(known):
+        after = edited.get(path, known[path]["after"])
+        if "\r\n" not in sources[path]:  # browsers submit textarea line breaks as CRLF
+            after = after.replace("\r\n", "\n")
+        if after != sources[path]:
+            files.append({**known[path], "after": after})
+    if {f["path"]: f["after"] for f in files} == {p: f["after"] for p, f in known.items()}:
+        raise FixError("Nothing changed: the files are the same as in the current revision.")
+    if not files:
+        raise FixError("Your edits undo every change. Nothing would be left to open as a pull request.")
+    revisions = list(proposal.revisions or []) or [
+        {**_revision(proposal, "ai", None, proposal.finished_at),
+         "verdict": (proposal.verification or {}).get("verdict", "")}]
+    proposal.revisions = revisions  # the AI's revision, kept before its diff is replaced
+    proposal.files = files
+    proposal.diff = "".join(unified_diff(f["path"], sources[f["path"]], f["after"]) for f in files)
+    proposal.verification = {}
+    proposal.revisions = [*revisions, _revision(proposal, "edit", user, utcnow())]
+    proposal.status = "verifying"
+    events.record("fix.edited", organization_id=org.id, target=proposal, actor_id=user.id,
+                  revision=current_revision(proposal), files=len(files))
+    db.session.commit()
+    _enqueue_verify(proposal)
+
+
+def _enqueue_verify(proposal: FixProposal) -> None:
+    from .tasks import verify_fix
+
+    try:
+        verify_fix.apply_async(args=[str(proposal.id)], queue="audits")
+    except Exception as exc:  # broker unavailable: keep the edit, report that it was not re-audited
+        current_app.logger.error("failed to enqueue fix verification %s: %s", proposal.id, type(exc).__name__)
+        finish_edit(proposal, {"verdict": "error", "error": "The work queue is unavailable, so the edit was not "
+                                                            "re-audited."})
+        db.session.commit()
+        return
+    db.session.refresh(proposal)  # eager mode: the task already ran and committed
+
+
+def reverify(proposal: FixProposal) -> None:
+    """Re-audit an edited proposal (called from the worker). Every selected finding in a changed file is
+    expected to be gone, whether or not the AI fixed it, since a person may have finished the job by hand."""
+    findings = proposal_findings(proposal)
+    changed = {f["path"] for f in proposal.files}
+    wanted = {str(f.id) for f in findings if f.file_path in changed}
+    verification = run_verification(proposal, findings, wanted) if current_app.config.get("FIX_VERIFY", True) \
+        else {}
+    finish_edit(proposal, verification)
+
+
+def finish_edit(proposal: FixProposal, verification: dict) -> None:
+    proposal.verification = verification
+    proposal.status = "ready"
+    revisions = list(proposal.revisions or [])
+    if revisions:
+        revisions[-1] = {**revisions[-1], "verdict": verification.get("verdict", "")}
+        proposal.revisions = revisions
+
+
 # -------------------------------------------------------------------------------------------- pull request
 def _base_branch(audit: Audit) -> str:
     branch = audit.branch or ""
@@ -239,9 +337,15 @@ def pr_body(proposal: FixProposal, findings: dict[str, Finding], link: str) -> s
     skipped = proposal.results.get("failed", [])
     if skipped:
         lines += ["", f"{len(skipped)} selected finding(s) were not changed; see eVal for the reasons."]
+    edits = [r for r in proposal.revisions or [] if r.get("kind") == "edit"]
+    if edits:
+        authors = ", ".join(sorted({r["author"] for r in edits if r.get("author")})) or "a team member"
+        lines += ["", f"✏️ **Edited by hand in eVal** after generation ({len(edits)} edit(s) by {authors}). The "
+                      "summaries above describe the AI's change; the diff is the edited version."]
     lines += ["", *verification_summary(proposal.verification or {}, findings)]
     sha = proposal.audit.commit_sha[:12]
-    lines += ["", f"<sub>Generated by AI ({proposal.ai_model}) from audited commit `{sha}` · [view in eVal]({link}). "
+    origin = "Generated by AI and edited by hand" if edits else "Generated by AI"
+    lines += ["", f"<sub>{origin} ({proposal.ai_model}) from audited commit `{sha}` · [view in eVal]({link}). "
               "Review carefully and run your tests before merging.</sub>"]
     return "\n".join(lines)
 

@@ -6,10 +6,25 @@ import logging
 import os
 
 from flask import Flask, jsonify, render_template, request
+from flask.wrappers import Request
 
 from .extensions import csrf, db, login_manager, migrate
 
 __version__ = "0.1.0"
+
+# Form endpoints that carry whole source files and need more than the default in-memory form limit. Set on the
+# request class because CSRF validation parses the form before any view runs.
+LARGE_FORM_ENDPOINTS = {"fixes.edit": 2 * 512 * 1024 + 64 * 1024}  # file limit doubled for CRLF line breaks
+
+
+class EvalRequest(Request):
+    @property
+    def max_form_memory_size(self) -> int | None:
+        return LARGE_FORM_ENDPOINTS.get(self.endpoint or "") or super().max_form_memory_size
+
+    @max_form_memory_size.setter
+    def max_form_memory_size(self, value: int | None) -> None:
+        self._max_form_memory_size = value
 
 
 def create_app(config_name: str | None = None, overrides: dict | None = None) -> Flask:
@@ -18,6 +33,7 @@ def create_app(config_name: str | None = None, overrides: dict | None = None) ->
     from . import config as config_module
 
     app = Flask(__name__)
+    app.request_class = EvalRequest
     name = config_name or os.environ.get("EVAL_ENV", "production")
     app.config.from_object(config_module.CONFIGS[name])
     if overrides:

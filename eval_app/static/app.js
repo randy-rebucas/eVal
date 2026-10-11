@@ -291,6 +291,109 @@
     });
   });
 
+  // Fix editor: file tabs, line numbers, indentation keys and unsaved-change markers. Without JS each file is a
+  // plain textarea, stacked, and the form saves the same way.
+  document.querySelectorAll("[data-editor]").forEach(function (form) {
+    var tabs = Array.prototype.slice.call(form.querySelectorAll(".ed-tab"));
+    var panels = Array.prototype.slice.call(form.querySelectorAll(".ed-file"));
+    var submitting = false;
+    form.classList.add("is-live");
+    form.querySelector("[data-editor-tabs]").hidden = false;
+    var keys = form.querySelector("[data-editor-keys]");
+    if (keys) { keys.hidden = false; }
+
+    function select(i, focus) {
+      tabs.forEach(function (t, j) { t.setAttribute("aria-selected", String(i === j)); t.tabIndex = i === j ? 0 : -1; });
+      panels.forEach(function (p, j) { p.hidden = i !== j; });
+      if (focus) { tabs[i].focus(); }
+    }
+    tabs.forEach(function (t, i) {
+      t.addEventListener("click", function () { select(i, false); });
+      t.addEventListener("keydown", function (ev) {
+        var step = ev.key === "ArrowRight" ? 1 : ev.key === "ArrowLeft" ? -1 : 0;
+        if (step) { ev.preventDefault(); select((i + step + tabs.length) % tabs.length, true); }
+      });
+    });
+    select(0, false);
+
+    function save() {
+      submitting = true;
+      if (form.requestSubmit) { form.requestSubmit(); } else { form.submit(); }
+    }
+    form.addEventListener("submit", function () { submitting = true; });
+    window.addEventListener("beforeunload", function (ev) {
+      if (!submitting && form.querySelector(".ed-tab.is-dirty")) { ev.preventDefault(); ev.returnValue = ""; }
+    });
+
+    // Replace a range through the editing pipeline so the browser's undo stack keeps working.
+    function replace(text, start, end, value) {
+      text.focus();
+      text.setSelectionRange(start, end);
+      if (!document.execCommand || !document.execCommand("insertText", false, value)) {
+        text.setRangeText(value, start, end, "end");
+        text.dispatchEvent(new Event("input"));
+      }
+    }
+
+    panels.forEach(function (panel, i) {
+      var text = panel.querySelector("textarea");
+      var gutter = panel.querySelector(".ed-gutter");
+      var original = text.value;
+      var unit = /^\t/m.test(original) && !/^ {2}/m.test(original) ? "\t" : "    ";
+      var two = original.match(/^ {2}(?! )\S/m);
+      if (unit !== "\t" && two) { unit = "  "; }
+      var lines = 0;
+      var escaped = false;
+      gutter.hidden = false;
+
+      function number() {
+        var n = text.value.split("\n").length;
+        if (n !== lines) {
+          var out = [];
+          for (var k = 1; k <= n; k++) { out.push(k); }
+          gutter.textContent = out.join("\n");
+          lines = n;
+        }
+        gutter.scrollTop = text.scrollTop;
+      }
+      function mark() {
+        var changed = text.value !== original;
+        tabs[i].classList.toggle("is-dirty", changed);
+        tabs[i].querySelector(".ed-dirty").hidden = !changed;
+      }
+      function indent(outdent) {
+        var v = text.value, s = text.selectionStart, e = text.selectionEnd;
+        if (!outdent && v.slice(s, e).indexOf("\n") === -1) { replace(text, s, e, unit); return; }
+        var from = v.lastIndexOf("\n", s - 1) + 1;
+        var to = e > s && v[e - 1] === "\n" ? e - 1 : e;
+        var block = v.slice(from, to).split("\n").map(function (line) {
+          if (!outdent) { return unit + line; }
+          return line.indexOf(unit) === 0 ? line.slice(unit.length) : line.replace(/^[ \t]/, "");
+        }).join("\n");
+        replace(text, from, to, block);
+        text.setSelectionRange(from, from + block.length);
+      }
+
+      text.addEventListener("input", function () { number(); mark(); });
+      text.addEventListener("scroll", function () { gutter.scrollTop = text.scrollTop; });
+      text.addEventListener("keydown", function (ev) {
+        if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === "s") { ev.preventDefault(); save(); return; }
+        if (ev.key === "Escape") { escaped = true; return; }
+        if (ev.key === "Tab" && !escaped && !ev.ctrlKey && !ev.altKey && !ev.metaKey) {
+          ev.preventDefault();
+          indent(ev.shiftKey);
+        } else if (ev.key === "Enter" && !ev.shiftKey && !ev.ctrlKey && !ev.altKey && !ev.metaKey && !ev.isComposing) {
+          var v = text.value, s = text.selectionStart;
+          var lead = v.slice(v.lastIndexOf("\n", s - 1) + 1, s).match(/^[ \t]*/)[0];
+          ev.preventDefault();
+          replace(text, s, text.selectionEnd, "\n" + lead);
+        }
+        escaped = false;
+      });
+      number();
+    });
+  });
+
   // "Select all" checkbox for finding tables.
   document.querySelectorAll("[data-select-all]").forEach(function (box) {
     box.addEventListener("change", function () {

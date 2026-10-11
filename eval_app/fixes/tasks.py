@@ -35,3 +35,25 @@ def generate_fix(self, proposal_id: str) -> str:
         _fail(proposal, "Internal error while generating the fix. The incident was logged.")
     db.session.commit()
     return proposal.status
+
+
+@shared_task(name="eval.verify_fix", bind=True, max_retries=0)
+def verify_fix(self, proposal_id: str) -> str:
+    """Re-audit a fix after a person edited it. A redelivered task simply re-runs the (idempotent) re-audit."""
+    from .services import finish_edit, reverify
+
+    proposal = db.session.get(FixProposal, uuid.UUID(proposal_id))
+    if proposal is None or proposal.status != "verifying":
+        return "skipped"
+    try:
+        reverify(proposal)
+    except SoftTimeLimitExceeded:
+        db.session.rollback()
+        finish_edit(proposal, {"verdict": "error", "error": "The re-audit took too long."})
+    except Exception:  # noqa: BLE001 - never leave the proposal stuck in "verifying"
+        db.session.rollback()
+        current_app.logger.exception("fix %s re-audit failed", proposal_id)
+        finish_edit(proposal, {"verdict": "error", "error": "Internal error during the re-audit. The incident was "
+                                                            "logged."})
+    db.session.commit()
+    return proposal.status

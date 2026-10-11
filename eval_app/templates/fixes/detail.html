@@ -37,9 +37,15 @@
   <section class="term" data-progress-url="{{ url_for('fixes.status', org_slug=g.org.slug, fix_id=fix.id) }}" aria-label="Fix progress">
     <div class="term-bar"><span class="term-dots" aria-hidden="true"><i></i><i></i><i></i></span><p class="term-title">eval-fix — <b>{{ repo.name }}</b></p></div>
     <div class="term-body">
-      <p class="term-line"><span class="term-prompt">$</span> stage: <strong data-stage>{{ 'generating fix' if fix.status == 'running' else 'queued' }}</strong></p>
-      <div class="progress my-2" role="progressbar" aria-label="Fix progress"><div class="progress-bar progress-bar-striped progress-bar-animated" data-width="{{ 50 if fix.status == 'running' else 10 }}"></div></div>
+      {% set stages = {'running': (50, 'generating fix'), 'verifying': (60, 're-auditing your edit')} %}
+      {% set pct, stage = stages.get(fix.status, (10, 'queued')) %}
+      <p class="term-line"><span class="term-prompt">$</span> stage: <strong data-stage>{{ stage }}</strong></p>
+      <div class="progress my-2" role="progressbar" aria-label="Fix progress"><div class="progress-bar progress-bar-striped progress-bar-animated" data-width="{{ pct }}"></div></div>
+      {% if fix.status == 'verifying' %}
+      <p class="term-line term-cmt mt-2"># Running the same static analyzers on revision {{ revision }}. Your code is not executed.</p>
+      {% else %}
       <p class="term-line term-cmt mt-2"># The AI sees only the affected files (secrets masked). Nothing is pushed until you open a pull request.</p>
+      {% endif %}
     </div>
   </section>
   {% endif %}
@@ -98,9 +104,58 @@
 
   {% if fix.diff %}
   <section class="pane" aria-labelledby="diff-h">
-    <div class="pane-bar"><h2 id="diff-h"><span><i class="bi bi-file-diff" aria-hidden="true"></i> Proposed changes</span></h2><span class="badge kind kind-ai_observation">AI-generated · review before merging</span></div>
+    <div class="pane-bar"><h2 id="diff-h"><span><i class="bi bi-file-diff" aria-hidden="true"></i> Proposed changes</span>{% if fix.revisions %}<span class="pane-aside">revision {{ revision }}</span>{% endif %}</h2><span class="badge kind kind-ai_observation">{{ 'AI-generated, edited by hand' if fix.is_edited else 'AI-generated' }} · review before merging</span></div>
     <pre class="diff" tabindex="0">{% for line in diff_lines %}<span class="{{ 'd-file' if line.startswith(('diff --git', '--- ', '+++ ')) else 'd-hunk' if line.startswith('@@') else 'd-add' if line.startswith('+') else 'd-del' if line.startswith('-') else 'd-ctx' }}">{{ line }}</span>{% endfor %}</pre>
     <p class="pane-note px-3 pb-3">Apply locally with <code>git apply eval-fix-….patch</code>, or open a pull request{% if repo.source != 'github' %} (GitHub repositories only){% endif %}. Run your tests before merging: eVal does not build or execute your code.</p>
+  </section>
+  {% endif %}
+
+  {% if fix.status == 'ready' and can_write and fix.files %}
+  <section class="pane" aria-labelledby="edit-h">
+    <div class="pane-bar"><h2 id="edit-h"><span><i class="bi bi-pencil-square" aria-hidden="true"></i> Edit the fix</span></h2><span class="pane-aside">revision {{ revision }} · {{ fix.files|length }} file{{ 's' if fix.files|length != 1 }}</span></div>
+    <form method="post" action="{{ url_for('fixes.edit', org_slug=g.org.slug, fix_id=fix.id) }}" enctype="multipart/form-data" class="ed" data-editor>
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="revision" value="{{ revision }}">
+      <div class="ed-tabs" role="tablist" aria-label="Files in this fix" data-editor-tabs hidden>
+        {% for f in fix.files %}<button type="button" class="ed-tab" role="tab" id="ed-tab-{{ loop.index }}" aria-controls="ed-file-{{ loop.index }}" aria-selected="{{ 'true' if loop.first else 'false' }}" tabindex="{{ 0 if loop.first else -1 }}"><span class="mono">{{ f.path }}</span><span class="ed-dirty" aria-hidden="true" hidden>●</span></button>{% endfor %}
+      </div>
+      {% for f in fix.files %}
+      <div class="ed-file" id="ed-file-{{ loop.index }}" role="tabpanel" aria-labelledby="ed-tab-{{ loop.index }}">
+        <input type="hidden" name="path" value="{{ f.path }}">
+        <label class="ed-label mono" for="ed-text-{{ loop.index }}">{{ f.path }}</label>
+        <div class="ed-frame">
+          <pre class="ed-gutter" aria-hidden="true" hidden></pre>
+          <textarea class="ed-text" id="ed-text-{{ loop.index }}" name="content" rows="24" wrap="off" spellcheck="false" autocapitalize="off" autocomplete="off" aria-describedby="ed-help">
+{{ f.after }}</textarea>
+        </div>
+      </div>
+      {% endfor %}
+      <div class="ed-foot">
+        <p class="pane-note m-0" id="ed-help">Saving keeps revision {{ revision }} in the history and re-runs the static analyzers on the changed files. Up to {{ max_kb }} KB per file. <span data-editor-keys hidden>Tab indents, Esc then Tab leaves the editor, Ctrl+S saves.</span></p>
+        <button class="btn-ink" type="submit"><i class="bi bi-arrow-repeat" aria-hidden="true"></i> Save and re-audit</button>
+      </div>
+    </form>
+  </section>
+  {% endif %}
+
+  {% if fix.revisions %}
+  <section class="pane" aria-labelledby="rev-h">
+    <div class="pane-bar"><h2 id="rev-h">Revisions</h2><span class="pane-aside">{{ fix.revisions|length }}</span></div>
+    <div class="register-wrap">
+    <table class="register">
+      <thead><tr><th class="w-fit">#</th><th>Author</th><th>Re-audit</th><th class="w-fit">Patch</th></tr></thead>
+      <tbody>
+      {% for r in fix.revisions|reverse %}
+        <tr>
+          <td class="mono">{{ r.number }}{% if r.number == revision %} <span class="reg-sub">current</span>{% endif %}</td>
+          <td>{% if r.kind == 'ai' %}AI <span class="reg-sub d-block">{{ fix.ai_model }}</span>{% else %}{{ r.author or 'former member' }} <span class="reg-sub d-block">edited by hand</span>{% endif %}{% if r.at %}<span class="reg-sub d-block">{{ r.at[:16].replace('T', ' ') }} UTC</span>{% endif %}</td>
+          <td>{% if r.verdict %}{{ r.verdict }}{% elif r.number == revision and fix.status == 'verifying' %}running{% else %}<span class="reg-quiet">not verified</span>{% endif %}</td>
+          <td><a class="act" href="{{ url_for('fixes.revision_patch', org_slug=g.org.slug, fix_id=fix.id, number=r.number) }}"><i class="bi bi-download" aria-hidden="true"></i> .patch</a></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    </div>
   </section>
   {% endif %}
 </div>

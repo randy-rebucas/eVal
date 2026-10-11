@@ -490,6 +490,37 @@ a.rail-step:hover, .rail-all:hover { background: var(--panel-2); color: var(--fg
 .diff .d-add { color: var(--ok); background: var(--ok-wash); }
 .diff .d-del { color: var(--crit); background: var(--crit-wash); }
 .diff .d-ctx { color: var(--fg-2); }
+
+/* Fix editor: a textarea per file with a line-number gutter. Without JS the files stack with their paths as labels. */
+.ed-tabs { display: flex; overflow-x: auto; border-bottom: 1px solid var(--line); background: var(--panel-2); }
+.ed-tab {
+  display: inline-flex; align-items: center; gap: .4rem; flex: none; padding: .5rem var(--gutter);
+  background: transparent; color: var(--fg-2); border: 0; border-right: 1px solid var(--line);
+  border-bottom: 2px solid transparent; font-size: .74rem;
+}
+.ed-tab:hover { color: var(--fg); }
+.ed-tab[aria-selected="true"] { color: var(--fg); background: var(--panel); border-bottom-color: var(--accent); }
+.ed-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.ed-dirty { color: var(--warn); font-size: .6rem; }
+.ed-label { display: block; padding: .5rem var(--gutter) .25rem; font-size: .74rem; color: var(--fg-2); }
+.ed.is-live .ed-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.ed-frame { display: flex; background: var(--input-bg); border-bottom: 1px solid var(--line); }
+.ed-gutter, .ed-text { margin: 0; padding: .75rem .6rem; font: .76rem/1.5 var(--mono); }
+.ed-gutter {
+  flex: none; min-width: 3.2rem; overflow: hidden; text-align: right; user-select: none;
+  color: var(--fg-3); background: var(--panel-2); border-right: 1px solid var(--line);
+}
+.ed-text {
+  flex: 1; min-width: 0; height: 32rem; max-height: 70vh; resize: vertical; tab-size: 4;
+  color: var(--fg); background: transparent; border: 0; white-space: pre; overflow: auto;
+}
+.ed-text:focus { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
+.ed-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .75rem 1rem; padding: .75rem var(--gutter); }
+.ed-foot .pane-note { flex: 1 1 22rem; }
+@media (max-width: 600px) {
+  .ed-gutter { min-width: 2.4rem; padding-inline: .4rem; }
+  .ed-text { height: 24rem; }
+}
 .browse-list { max-height: 28rem; overflow-y: auto; border: 1px solid var(--line); }
 .browse-list .tag { margin-left: .35rem; }
 .register { width: 100%; border-collapse: collapse; font-size: .82rem; line-height: 1.35; }
