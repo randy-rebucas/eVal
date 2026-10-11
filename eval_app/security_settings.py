@@ -6,7 +6,7 @@ import csv
 import io
 import json
 
-from flask import Blueprint, Response, flash, g, make_response, redirect, render_template, request, url_for
+from flask import Blueprint, Response, flash, g, make_response, redirect, render_template, request, url_for, abort
 from flask_login import current_user
 
 from .auth import sso
@@ -18,6 +18,13 @@ from .security.tenancy import get_scoped_or_404, org_required
 
 bp = Blueprint("security_settings", __name__, url_prefix="/o/<org_slug>/settings")
 LOG_PAGE = 100
+
+@bp.before_request
+def _csrf_protect():
+    if request.method == "POST":
+        origin = request.headers.get("Origin") or request.headers.get("Referer")
+        if not origin or not origin.startswith(request.host_url):
+            abort(400)
 
 
 def _domains(text: str) -> list[str]:

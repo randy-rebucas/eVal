@@ -22,6 +22,13 @@ PENDING_KEY = "mfa_pending"
 SETUP_KEY = "mfa_setup"
 PENDING_MAX_AGE = 300
 
+@bp.before_request
+def _csrf_protect():
+    if request.method == "POST":
+        origin = request.headers.get("Origin") or request.headers.get("Referer")
+        if not origin or not origin.startswith(request.host_url):
+            abort(400)
+
 
 def complete_login(user: User, method: str, next_url: str | None, sso_org: str | None = None):
     """Finish a sign-in (after the first factor): challenge for TOTP when enabled, else log in. Returns a response."""

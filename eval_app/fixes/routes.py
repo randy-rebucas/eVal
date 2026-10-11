@@ -13,6 +13,13 @@ from . import services
 
 bp = Blueprint("fixes", __name__, url_prefix="/o/<org_slug>")
 
+@bp.before_request
+def _csrf_protect():
+    if request.method == "POST":
+        origin = request.headers.get("Origin") or request.headers.get("Referer")
+        if not origin or not origin.startswith(request.host_url):
+            abort(400)
+
 
 @bp.post("/audits/<audit_id>/fixes")
 @org_required("member")
