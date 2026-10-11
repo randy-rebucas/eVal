@@ -30,7 +30,8 @@ Test suite: ~430 tests (unit + integration), run on SQLite and PostgreSQL.
 **Platform / operations**
 - PostgreSQL Row Level Security policies (schema is ready; see SECURITY.md §3).
 - Kernel-level sandbox for analyzers (gVisor/Kata/Firecracker) and separation of the analysis sandbox from the
-  DB-connected worker.
+  DB-connected worker. The opt-in sandbox terminal ([SANDBOX.md](SANDBOX.md)) already runs separately under gVisor;
+  the analyzers do not yet.
 - Upload/archive retention policies and storage on object storage (S3) instead of a local volume.
 - Structured logging/metrics/tracing (OpenTelemetry), audit-duration SLOs, Celery monitoring.
 - Usage metering, billing, quotas beyond the per-org concurrency limit.

@@ -126,6 +126,9 @@ class Organization(TimestampMixin, db.Model):
                                                          server_default=sa.true())
     # Members must have a second factor: TOTP, or a sign-in through this organization's SSO.
     require_mfa: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False, server_default=sa.false())
+    # Members may open sandbox terminals that run this organization's code (docs/SANDBOX.md). Admin opt-in.
+    allow_sandbox: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False,
+                                                server_default=sa.false())
 
     memberships: Mapped[list[Membership]] = relationship(
         back_populates="organization", cascade="all, delete-orphan"
@@ -456,6 +459,38 @@ class FixProposal(TenantMixin, TimestampMixin, db.Model):
     @property
     def is_edited(self) -> bool:
         return any(r.get("kind") == "edit" for r in self.revisions or [])
+
+
+class SandboxSession(TenantMixin, TimestampMixin, db.Model):
+    """A terminal in the sandbox service, on the audited commit with a fix applied. The container lives there; this
+    row is eVal's record of who opened it, for which fix, and how it ended."""
+
+    __tablename__ = "sandbox_sessions"
+    __table_args__ = (
+        sa.CheckConstraint("status IN ('preparing','ready','ended','failed')", name="status_valid"),
+    )
+
+    organization_id: Mapped[uuid.UUID] = org_fk()
+    fix_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("fix_proposals.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(sa.ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    status: Mapped[str] = mapped_column(sa.String(16), nullable=False, default="preparing")
+    revision: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=1)  # fix revision copied in
+    runtime: Mapped[str] = mapped_column(sa.String(32), nullable=False, default="")
+    network: Mapped[str] = mapped_column(sa.String(64), nullable=False, default="")
+    insecure: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False)
+    error: Mapped[str] = mapped_column(sa.Text, nullable=False, default="")
+    expires_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    ended_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+    fix: Mapped[FixProposal] = relationship()
+    user: Mapped[User | None] = relationship()
+
+    @property
+    def is_open(self) -> bool:
+        expires = self.expires_at
+        if expires is not None and expires.tzinfo is None:  # SQLite returns naive UTC datetimes
+            expires = expires.replace(tzinfo=UTC)
+        return self.status in ("preparing", "ready") and (expires is None or expires > utcnow())
 
 
 class Finding(TenantMixin, TimestampMixin, db.Model):

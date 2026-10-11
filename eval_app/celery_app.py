@@ -29,7 +29,8 @@ def init_celery(app: Flask) -> Celery:
         task_time_limit=app.config["ANALYZER_TIMEOUT_SECONDS"] * 6,
         task_soft_time_limit=app.config["ANALYZER_TIMEOUT_SECONDS"] * 5,
         task_routes={"eval.run_audit": {"queue": "audits"}, "eval.generate_fix": {"queue": "audits"},
-                     "eval.verify_fix": {"queue": "audits"}, "eval.scheduled_audits": {"queue": "audits"}},
+                     "eval.verify_fix": {"queue": "audits"}, "eval.prepare_sandbox": {"queue": "audits"},
+                     "eval.scheduled_audits": {"queue": "audits"}},
         broker_connection_retry_on_startup=True,
         result_expires=3600,
         # Run by `celery beat` (Compose: the scheduler service; Render: the worker's embedded beat, -B).
@@ -39,5 +40,6 @@ def init_celery(app: Flask) -> Celery:
     app.extensions["celery"] = celery
     from .audits import schedule, tasks  # noqa: F401  (register tasks)
     from .fixes import tasks as fix_tasks  # noqa: F401
+    from .sandbox import tasks as sandbox_tasks  # noqa: F401
 
     return celery

@@ -7,6 +7,7 @@ from flask_login import current_user
 
 from ..extensions import db
 from ..models import Audit, Finding, FixProposal
+from ..sandbox import services as sandbox
 from ..security.tenancy import get_scoped_or_404, org_required, parse_uuid_or_404
 from . import services
 
@@ -42,6 +43,7 @@ def detail(org_slug, fix_id):
                            diff_lines=proposal.diff.splitlines(), verification=proposal.verification or {},
                            revision=services.current_revision(proposal),
                            ide_links=services.ide_links(proposal), ide_branch=services.ide_branch(proposal),
+                           sandbox_available=sandbox.available(g.org),
                            max_kb=services.MAX_SOURCE_BYTES // 1024)
 
 

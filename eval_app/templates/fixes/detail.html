@@ -120,6 +120,13 @@
       {% else %}
       <p class="mb-2">Open the audited branch <span class="mono">{{ ide_branch }}</span> and run <strong>eVal: Apply Fix Proposal</strong> from the command palette with the <a href="https://marketplace.visualstudio.com/items?itemName=randy-rebucas.eval-auditor" rel="noopener noreferrer" target="_blank">eVal extension</a>. VS Code shows each change for review before writing it. Then run your tests in the terminal and commit.</p>
       {% endif %}
+      {% if sandbox_available and can_write and fix.status in ['ready', 'pr_opened'] %}
+      <form method="post" action="{{ url_for('sandbox.open_terminal', org_slug=g.org.slug, fix_id=fix.id) }}" class="mb-2">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="btn-ink"><i class="bi bi-terminal-fill" aria-hidden="true"></i> Open a terminal on this fix</button>
+        <span class="pane-note">an isolated container on this server: the audited commit with revision {{ revision }} applied, no credentials{% if config.SANDBOX_MAX_MINUTES %}, up to {{ config.SANDBOX_MAX_MINUTES }} minutes{% endif %}</span>
+      </form>
+      {% endif %}
       {% if ide_links %}
       <div class="d-flex flex-wrap gap-2 mb-2">
         <a class="btn-ink" href="{{ ide_links.codespaces }}" rel="noopener noreferrer" target="_blank"><i class="bi bi-terminal" aria-hidden="true"></i> Open in Codespaces</a>

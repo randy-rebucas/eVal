@@ -89,6 +89,29 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
 
+  # Optional sandbox terminals (docs/SANDBOX.md). Not started unless you run with `--profile sandbox`.
+  # It is the only service with the Docker socket, so it gets nothing else: no database, no app secrets.
+  # Requires gVisor (runsc) registered with this Docker host; build the workspace image first:
+  #   docker build -f sandbox/workspace.Dockerfile -t eval-sandbox-workspace:latest sandbox
+  sandbox:
+    profiles: ["sandbox"]
+    build: { context: ., dockerfile: Dockerfile.sandbox }
+    environment:
+      EVAL_SANDBOX_SECRET: ${EVAL_SANDBOX_SECRET:?set EVAL_SANDBOX_SECRET in .env to use the sandbox}
+      EVAL_SANDBOX_ALLOWED_ORIGINS: ${EVAL_SANDBOX_ALLOWED_ORIGINS:-http://localhost:8000}
+      EVAL_SANDBOX_RUNTIME: ${EVAL_SANDBOX_RUNTIME:-runsc}
+      EVAL_SANDBOX_ALLOW_RUNC: ${EVAL_SANDBOX_ALLOW_RUNC:-false}
+      EVAL_SANDBOX_MAX_MINUTES: ${EVAL_SANDBOX_MAX_MINUTES:-30}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    # Browsers connect here for the terminal websocket; put TLS in front (wss://) and set EVAL_SANDBOX_PUBLIC_URL.
+    ports: ["127.0.0.1:8100:8100"]
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    mem_limit: 256m
+    restart: unless-stopped
+
 volumes:
   pg-data:
   redis-data:

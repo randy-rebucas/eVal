@@ -92,6 +92,13 @@ class BaseConfig:
     AI_ALLOWED_BASE_URLS = os.environ.get("EVAL_AI_ALLOWED_BASE_URLS", "")
     AI_TIMEOUT_SECONDS = _int("EVAL_AI_TIMEOUT_SECONDS", 120)
 
+    # Optional sandbox terminal (docs/SANDBOX.md): a separate service that runs one isolated container per session.
+    # Off unless both URLs and the shared secret are set; each organization's admin must also turn it on.
+    SANDBOX_URL = os.environ.get("EVAL_SANDBOX_URL", "").rstrip("/")  # internal, e.g. http://sandbox:8100
+    SANDBOX_PUBLIC_URL = os.environ.get("EVAL_SANDBOX_PUBLIC_URL", "").rstrip("/")  # browsers, e.g. wss://sbx.example
+    SANDBOX_SECRET = os.environ.get("EVAL_SANDBOX_SECRET", "")
+    SANDBOX_MAX_MINUTES = _int("EVAL_SANDBOX_MAX_MINUTES", 30)
+
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"
     SESSION_COOKIE_SECURE = _bool("EVAL_SECURE_COOKIES", True)
@@ -153,5 +160,13 @@ def validate(config: dict) -> None:
         problems.append("DATABASE_URL must be set")
     if not config.get("ENCRYPTION_KEYS"):
         problems.append("EVAL_ENCRYPTION_KEYS must be set (generate with `python -m eval_app.security.crypto`)")
+    sandbox = [config.get(k) for k in ("SANDBOX_URL", "SANDBOX_PUBLIC_URL", "SANDBOX_SECRET")]
+    if any(sandbox) and not all(sandbox):
+        problems.append("EVAL_SANDBOX_URL, EVAL_SANDBOX_PUBLIC_URL and EVAL_SANDBOX_SECRET must be set together")
+    elif all(sandbox):
+        if len(config["SANDBOX_SECRET"]) < 32:
+            problems.append("EVAL_SANDBOX_SECRET must be at least 32 characters")
+        if not config["SANDBOX_PUBLIC_URL"].startswith(("wss://", "ws://")):
+            problems.append("EVAL_SANDBOX_PUBLIC_URL must be a wss:// URL (ws:// for local development only)")
     if problems:
         raise RuntimeError("Invalid configuration: " + "; ".join(problems))

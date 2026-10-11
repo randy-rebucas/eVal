@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Terminal · {{ audit.repository.name }}{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css"
+      integrity="sha384-8Xk9wy/gzEDUKrXtrmCFa2bBuK3BpjpDuL/p0SeKQX19Khl/M+lHOgD/CyYf7efP" crossorigin="anonymous">
+{% endblock %}
+{% block content %}
+{% set repo = audit.repository %}
+{% set label = 'preparing' if session.status == 'preparing' else 'open' if (session.status == 'ready' and session.is_open) else 'failed' if session.status == 'failed' else 'ended' %}
+{% set badge = {'preparing': 'running', 'open': 'succeeded', 'failed': 'failed', 'ended': 'cancelled'}[label] %}
+<div class="page">
+  <header class="page-head">
+    <div>
+      <p class="trail"><a href="{{ url_for('repos.detail', org_slug=g.org.slug, repo_id=repo.id) }}">{{ repo.name }}</a><span class="sep">/</span><a href="{{ url_for('fixes.detail', org_slug=g.org.slug, fix_id=fix.id) }}">fix</a><span class="sep">/</span>terminal</p>
+      <h1 class="page-title"><i class="bi bi-terminal" aria-hidden="true"></i> Terminal · {{ repo.name }} <span class="st st-{{ badge }}">{{ label }}</span></h1>
+      <p class="page-meta">
+        <span>commit <span class="mono">{{ audit.commit_sha[:12] or '—' }}</span> + fix revision {{ session.revision }}</span>
+        {% if session.expires_at and session.is_open %}<span>ends <time class="mono" datetime="{{ session.expires_at.isoformat() }}" data-ends>{{ session.expires_at|dt }}</time></span>{% endif %}
+        {% if session.runtime %}<span>{{ session.runtime }} · network {{ session.network }}</span>{% endif %}
+      </p>
+    </div>
+    {% if session.is_open %}
+    <div class="page-acts">
+      {% if session.status == 'ready' and fix.status == 'ready' %}
+      <form method="post" action="{{ url_for('sandbox.save', org_slug=g.org.slug, session_id=session.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="act" data-confirm="Copy {{ fix.files|map(attribute='path')|join(', ') }} from the terminal into a new revision of the fix, and re-audit it?" data-confirm-ok="Save to fix"><i class="bi bi-box-arrow-in-down" aria-hidden="true"></i> Save files to the fix</button>
+      </form>
+      {% endif %}
+      <form method="post" action="{{ url_for('sandbox.end', org_slug=g.org.slug, session_id=session.id) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="act" data-confirm="End the terminal? Its container and any unsaved files are deleted." data-confirm-ok="End terminal"><i class="bi bi-x-octagon" aria-hidden="true"></i> End</button>
+      </form>
+    </div>
+    {% endif %}
+  </header>
+
+  {% if session.insecure %}
+  <div class="alert alert-danger" role="alert"><strong>Development sandbox.</strong> This server runs terminals with the <span class="mono">{{ session.runtime }}</span> runtime, which shares the host's kernel. Do not use it for code you do not trust.</div>
+  {% endif %}
+  {% if session.error %}<div class="alert alert-danger" role="alert">{{ session.error }}</div>{% endif %}
+
+  {% if session.status == 'preparing' %}
+  <section class="term" data-progress-url="{{ url_for('sandbox.status', org_slug=g.org.slug, session_id=session.id) }}" aria-label="Terminal preparation">
+    <div class="term-bar"><span class="term-dots" aria-hidden="true"><i></i><i></i><i></i></span><p class="term-title">eval-sandbox — <b>{{ repo.name }}</b></p></div>
+    <div class="term-body">
+      <p class="term-line"><span class="term-prompt">$</span> stage: <strong data-stage>preparing the workspace</strong></p>
+      <div class="progress my-2" role="progressbar" aria-label="Preparation progress"><div class="progress-bar progress-bar-striped progress-bar-animated" data-width="40"></div></div>
+      <p class="term-line term-cmt mt-2"># Fetching the audited commit and applying fix revision {{ session.revision }}. No credentials are copied in.</p>
+    </div>
+  </section>
+  {% elif session.status == 'ready' and session.is_open %}
+  <section class="term sbx" aria-label="Terminal">
+    <div class="term-bar"><span class="term-dots" aria-hidden="true"><i></i><i></i><i></i></span><p class="term-title">sandbox — <b>{{ repo.name }}</b></p><span class="sbx-status" data-terminal-status role="status">connecting…</span></div>
+    <div class="sbx-screen" data-terminal data-token-url="{{ url_for('sandbox.token', org_slug=g.org.slug, session_id=session.id) }}" data-csrf="{{ csrf_token() }}"></div>
+    <noscript><p class="term-body m-0">The terminal needs JavaScript.</p></noscript>
+  </section>
+  <p class="pane-note">Your code runs in an isolated container: no credentials, no git remote{% if session.network == 'none' %}, no network (install nothing from the internet; use what the image provides){% endif %}. <code>git diff</code> shows the fix against the audited commit. <strong>Save files to the fix</strong> copies only the fix's files ({{ fix.files|map(attribute='path')|join(', ') }}) into a new, re-audited revision.</p>
+  {% else %}
+  <section class="pane"><div class="px-3 py-3"><p class="mb-2">This terminal has {{ 'failed to start' if session.status == 'failed' else 'ended' }}. Its container and files are gone.</p>
+    {% if fix.status in ['ready', 'pr_opened'] and g.org.allow_sandbox %}
+    <form method="post" action="{{ url_for('sandbox.open_terminal', org_slug=g.org.slug, fix_id=fix.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="btn-ink"><i class="bi bi-terminal" aria-hidden="true"></i> Open a new terminal</button></form>
+    {% endif %}
+  </div></section>
+  {% endif %}
+</div>
+{% endblock %}
+{% block scripts %}
+{% if session.status == 'ready' and session.is_open %}
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"
+        integrity="sha384-M169f14mRZOXm3hD/v2Ti0ThIT/RnAQagXA9nlE15yHAtrW19gdePJh/HaTzUOe/" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"
+        integrity="sha384-iF+jqbuti4XlB64clWgFWYEscb+UnSRv3VgVikGYZu+otNFnSHr7y7NcKfBnGizn" crossorigin="anonymous"></script>
+<script src="{{ url_for('static', filename='terminal.js') }}"></script>
+{% endif %}
+{% endblock %}

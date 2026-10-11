@@ -37,9 +37,14 @@ ai = [
   "anthropic>=0.40",
   "openai>=1.50",
 ]
+# The sandbox terminal service (eval_sandbox, Dockerfile.sandbox); the web app and workers do not need it.
+sandbox = [
+  "aiohttp>=3.9,<4",
+]
 dev = [
   "pytest>=8.2",
   "pytest-cov>=5",
+  "aiohttp>=3.9,<4",
   "ruff>=0.6",
   "bandit>=1.7.9",
   "mypy>=1.11",
@@ -49,7 +54,7 @@ dev = [
 eval-audit = "eval_engine.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["eval_engine*", "eval_app*"]
+include = ["eval_engine*", "eval_app*", "eval_sandbox*"]
 
 [tool.setuptools.package-data]
 eval_engine = ["ai/prompts/*.txt", "rules/*.json"]
