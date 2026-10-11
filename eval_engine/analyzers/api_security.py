@@ -1,6 +1,9 @@
 """API and web-application security: authentication coverage, object-level authorization (IDOR), error
 disclosure and error handling, debug mode, CORS, JWT and TLS verification, mass assignment, CSRF, cookie flags,
-credentials written to logs, file-upload validation, rate limiting, and hardening middleware."""
+credentials written to logs, file-upload validation, rate limiting, and hardening middleware.
+
+API design (input validation, status codes, idempotency, versioning, error-format consistency) is in ``api_design``.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +11,7 @@ import ast
 import re
 
 from ..findings import Category, Confidence, FindingKind, Severity
+from .api_design import design_issues
 from .base import Analyzer, AnalyzerContext, is_test_path
 from .registry import register
 
@@ -88,6 +92,7 @@ AUTH_ENDPOINT = re.compile(r"(?i)(login|log_in|signin|sign_in|token|password|pas
                            r"two_factor|verify|register|signup|sign_up)")
 PY_RATE_LIMIT = re.compile(r"(?i)(flask[_-]limiter|\bLimiter\b|slowapi|ratelimit|rate_limit|throttl|django[_-]axes|"
                            r"\baxes\b|fastapi[_-]limiter|brute_?force|login_attempts|failed_attempts|lockout)")
+MIN_ROUTES_FOR_RATE_LIMIT = 5  # below this an API-wide limit is not worth reporting when no login route exists
 
 
 def _is_false(node) -> bool:
@@ -221,7 +226,7 @@ class APISecurityAnalyzer(Analyzer):
         unprotected: list[tuple[str, int, str, str]] = []
         auth_routes: list[tuple[str, int, str]] = []
         auth_seen = error_handler_seen = rate_limit_seen = False
-        route_count = 0
+        route_count = py_route_count = 0
         for rel in ctx.python_files():
             if is_test_path(rel):
                 continue
@@ -249,6 +254,7 @@ class APISecurityAnalyzer(Analyzer):
                 if not routes:
                     continue
                 route_count += 1
+                py_route_count += 1
                 findings.extend(self._error_details(ctx, rel, node))
                 path, methods = routes[0][1]
                 if "POST" in methods and AUTH_ENDPOINT.search(f"{node.name} {path}"):
@@ -280,17 +286,23 @@ class APISecurityAnalyzer(Analyzer):
                     unprotected.append((rel, i, f"{m.group(1).upper()} {m.group(2)}", m.group(2)))
 
         findings.extend(self._unprotected(ctx, unprotected, auth_seen))
-        findings.extend(self._project_level(ctx))
+        findings.extend(self._project_level(ctx, route_count - py_route_count))
         findings.extend(self._no_error_handler(ctx, route_count, error_handler_seen))
-        findings.extend(self._python_rate_limit(ctx, auth_routes, rate_limit_seen))
+        findings.extend(self._python_rate_limit(ctx, auth_routes, rate_limit_seen, py_route_count))
+        findings.extend(self.finding(
+            ctx, rule=i.rule, title=i.title, category=Category.API, severity=i.severity, confidence=i.confidence,
+            kind=i.kind, description=i.description, remediation=i.remediation, file_path=i.file, line=i.line,
+            evidence=i.evidence) for i in design_issues(ctx))
         return findings
 
-    def _python_rate_limit(self, ctx, auth_routes, rate_limit_seen):
-        if not auth_routes or rate_limit_seen:
+    def _python_rate_limit(self, ctx, auth_routes, rate_limit_seen, route_count):
+        if rate_limit_seen or not (auth_routes or route_count >= MIN_ROUTES_FOR_RATE_LIMIT):
             return []
         manifests = ctx.files_named("requirements.txt", "pyproject.toml", "Pipfile", "setup.cfg", "setup.py")
         if any(PY_RATE_LIMIT.search(ctx.read(f) or "") for f in manifests):
             return []
+        if not auth_routes:
+            return [self._api_rate_limit(ctx, route_count)]
         rel, line, desc = auth_routes[0]
         return [self._f(ctx, "api.no-rate-limiting", f"Authentication endpoint without rate limiting: {desc}",
                         Severity.LOW, Confidence.LOW, FindingKind.POTENTIAL,
@@ -302,6 +314,17 @@ class APISecurityAnalyzer(Analyzer):
                         "Rate-limit authentication endpoints per IP and per account (e.g. Flask-Limiter "
                         "`@limiter.limit('5/minute')`, slowapi, django-ratelimit) and add progressive lockout.",
                         rel, line)]
+
+    def _api_rate_limit(self, ctx, route_count):
+        return self._f(ctx, "api.no-rate-limiting", f"API with {route_count} routes and no rate limiting",
+                       Severity.INFO, Confidence.LOW, FindingKind.POTENTIAL,
+                       "No rate limiting library, middleware or setting was found. Without per-client limits one "
+                       "client (a buggy integration, a scraper, or an attacker) can exhaust workers, database "
+                       "connections and paid downstream quotas for everyone. A gateway, WAF or reverse proxy may "
+                       "already limit requests — verify.",
+                       "Apply a default per-client limit to the API (Flask-Limiter, slowapi, DRF throttling, "
+                       "express-rate-limit, or gateway policies) with stricter limits on expensive endpoints.",
+                       "", None)
 
     # ------------------------------------------------------------------------------------------- python
     def _python_file(self, ctx, rel, tree, text):
@@ -719,7 +742,7 @@ class APISecurityAnalyzer(Analyzer):
                         "modify resources they own).", rel, line)
                 for rel, line, desc, _name in unprotected[:50]]
 
-    def _project_level(self, ctx):
+    def _project_level(self, ctx, js_route_count):
         out = []
         frameworks = set(ctx.languages.frameworks)
         if "express" in frameworks:
@@ -731,13 +754,16 @@ class APISecurityAnalyzer(Analyzer):
                                    "helmet (or equivalent) was not found; responses likely lack CSP, HSTS, "
                                    "X-Content-Type-Options and framing protection.",
                                    "Add helmet() or set the headers at the reverse proxy.", "", None))
-            if "rate-limit" not in all_js and "rateLimit" not in all_js and "login" in all_js.lower():
+            limited = re.search(r"(?i)rate-?limit|slow-down|throttl", all_js)
+            if not limited and "login" in all_js.lower():
                 out.append(self._f(ctx, "api.no-rate-limiting", "No rate limiting detected", Severity.LOW,
                                    Confidence.LOW, FindingKind.POTENTIAL,
                                    "Login routes exist but no rate limiting middleware was found, enabling "
                                    "credential stuffing and brute force.",
                                    "Rate-limit authentication endpoints (express-rate-limit, gateway policies).",
                                    "", None))
+            elif not limited and js_route_count >= MIN_ROUTES_FOR_RATE_LIMIT:
+                out.append(self._api_rate_limit(ctx, js_route_count))
         return out
 
     def _f(self, ctx, rule, title, sev, conf, kind, desc, fix, rel, line, category=Category.API):

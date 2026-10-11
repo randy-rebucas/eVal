@@ -37,8 +37,11 @@ indicators, and categories it could not assess are shown as *not assessed*.
 - GitHub repositories (public, or private via encrypted tokens) with branch/commit selection; ZIP uploads
 - Asynchronous audits on Celery + Redis with live progress and cancellation
 - 22 analyzers: Ruff, Bandit, mypy, ESLint, TypeScript, Semgrep, Trivy, OSV.dev, PyPI/npm registry checks, and
-  built-in checks for secrets, API security (including object-level authorization/IDOR, error disclosure, cookie
-  flags, credentials in logs, upload validation and rate limiting on login routes), **schema-aware auth checks**
+  built-in checks for secrets, **API security and design** (authentication, object-level authorization/IDOR,
+  request-body validation, error disclosure and handling, error responses sent with HTTP 200, inconsistent error
+  formats, idempotency of payment/order endpoints and payment-provider calls, versioning, rate limiting, cookie
+  flags, credentials in logs, upload validation; pagination and the OpenAPI contract are checked by the database and
+  configuration analyzers), **schema-aware auth checks**
   (an application profile of framework, auth scheme, datastore and password schema decides whether CSRF, JWT,
   password-storage and NoSQL-injection checks apply; the report shows the profile and why each applies),
   **databases** (PostgreSQL, MySQL, SQLite and MongoDB, engine-aware: schema read from SQLAlchemy, Django, Prisma
