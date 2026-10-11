@@ -63,6 +63,6 @@
 {% endmacro %}
 
 {% macro kind_badge(kind) %}
-  {% set label = {'confirmed':'Confirmed','potential':'Potential risk','estimate':'Static estimate','ai_observation':'AI observation'}[kind] %}
+  {% set label = {'confirmed':'Confirmed','potential':'Potential risk','estimate':'Static risk (estimate)','ai_observation':'AI observation'}[kind] %}
   <span class="badge kind kind-{{ kind }}">{{ label }}</span>
 {% endmacro %}

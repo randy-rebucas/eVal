@@ -27,7 +27,7 @@ snippets of already-detected findings, and are not used in local mode.
 | Component | What it does |
 |---|---|
 | Workspace, ZIP extraction, language detection | Reads files; never executes repository code |
-| Built-in analyzers: `secrets`, `api_security`, `database`, `devops`, `testing`, `dependencies` (hygiene), `maintainability`, `architecture`, `performance`, `configuration`, `taint`, `ai_code` (undeclared imports, lookalike package names from a bundled list, stubs, placeholders, hollow tests) | Pure Python static checks |
+| Built-in analyzers: `secrets`, `api_security`, `database`, `devops`, `observability`, `testing`, `dependencies` (hygiene), `maintainability`, `architecture`, `performance`, `configuration`, `taint`, `ai_code` (undeclared imports, lookalike package names from a bundled list, stubs, placeholders, hollow tests) | Pure Python static checks |
 | `ruff`, `bandit`, `mypy`, `eslint`, `tsc` | Installed tools run in the sandbox; no network use |
 | Deduplication, fingerprints, scoring, lifecycle | Deterministic, local |
 | Reports: Markdown, HTML, JSON, SARIF | Self-contained files; the HTML report has inline CSS and loads nothing |
@@ -39,7 +39,7 @@ snippets of already-detected findings, and are not used in local mode.
 | Component | Destination | Sent | Received | Offline (`--offline`) |
 |---|---|---|---|---|
 | `osv` | `api.osv.dev` | Ecosystem, package name and version of pinned dependencies. No source code | Advisories | Skipped (reported as not assessed). Disable anytime with `EVAL_OSV_ENABLED=0` |
-| `registry` | `pypi.org`, `registry.npmjs.org` | Names of declared dependencies (one request per package, at most 300). No source code, no versions | Whether the package exists and when it was first published | Skipped (reported as not assessed). Also skipped when the project configures a private index. Disable anytime with `EVAL_REGISTRY_CHECK_ENABLED=0` |
+| `registry` | `pypi.org`, `registry.npmjs.org` | Names of declared dependencies (one request per package, at most 300). No source code, no versions | Whether the package exists, when it was first published, and its latest version (compared locally with the version in use to report outdated majors) | Skipped (reported as not assessed). Also skipped when the project configures a private index. Disable anytime with `EVAL_REGISTRY_CHECK_ENABLED=0` |
 | `semgrep` | `semgrep.dev` | Rule-pack request only; metrics and version check are off | Rules (`p/default`) | Runs if `EVAL_SEMGREP_CONFIG` is a local rules path, otherwise skipped |
 | `trivy` | `mirror.gcr.io`, `ghcr.io` | Database download requests only | Vulnerability, Java and checks databases | Runs on a pre-seeded `EVAL_TRIVY_CACHE_DIR` (with update and online lookups disabled), otherwise skipped |
 | Cloud AI (web app only): Anthropic, OpenAI | `api.anthropic.com`, `api.openai.com` | Redacted titles, descriptions and evidence snippets of a capped number of detected findings (default 15), language profile, scores. Never whole files | Explanations, summary | Not available in the CLI; the CLI supports local AI only |

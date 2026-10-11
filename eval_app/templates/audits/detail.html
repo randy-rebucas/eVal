@@ -147,6 +147,7 @@
           <div class="cat-n"><b>{{ cs.score|score }}</b><a href="?category={{ name }}#findings">{{ cs.findings }} finding{{ '' if cs.findings == 1 else 's' }}</a></div>
           {{ score_bar(cs.score) }}
           {% if cs.ceiling_reason %}<div class="cat-why" title="{{ cs.ceiling_reason }}">{{ cs.ceiling_reason }}</div>{% endif %}
+          {% if name == 'performance' %}<div class="cat-why" title="Findings are read from the code. No benchmarks, load tests or profiling were run.">Static risk only · measured performance not assessed</div>{% endif %}
         {% else %}
           <div class="cat-why">No analyzer covering this category ran successfully.</div>
         {% endif %}
