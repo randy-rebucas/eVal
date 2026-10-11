@@ -19,6 +19,13 @@ bp = Blueprint("sso", __name__)
 SESSION_KEY = "sso_pending"
 MAX_AGE = 600
 
+@bp.before_request
+def _csrf_protect():
+    if request.method == "POST":
+        origin = request.headers.get("Origin") or request.headers.get("Referer")
+        if not origin or not origin.startswith(request.host_url):
+            abort(400)
+
 
 def _start(conn: SsoConnection, link: bool, next_url: str | None = None):
     if not conn.enabled:
