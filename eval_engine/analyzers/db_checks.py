@@ -426,8 +426,8 @@ def migration_checks(schema: Schema, dialects: set[str]) -> list[Issue]:
                         "the old column. (Widening varchar(n) to a larger n or to text is safe on PostgreSQL.)",
                         Confidence.MEDIUM, FindingKind.POTENTIAL)
             elif op.kind == "set_not_null":
-                backfilled = any(b.kind == "update" and op.column in b.columns and b.table == op.table
-                                 for b in before)
+                updates_index = {(b.table, c) for b in before if b.kind == "update" for c in b.columns}
+                backfilled = (op.table, op.column) in updates_index
                 add("database.unsafe-migration", mg, op, f"SET NOT NULL on existing column {where}",
                     Severity.LOW if backfilled else Severity.MEDIUM,
                     ("" if backfilled else "If any existing row is NULL the migration fails. ")
