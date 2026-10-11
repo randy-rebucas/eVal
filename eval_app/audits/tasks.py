@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections import deque
 from pathlib import Path
 
 from celery import shared_task
@@ -14,25 +15,45 @@ from ..extensions import db
 from ..models import Audit, utcnow
 
 STAGE_PROGRESS_FLUSH_SECONDS = 1.0
+ACTIVITY_LIMIT = 400  # running-log events kept on the audit; older ones are summarized by the UI as a gap
 
 
 class _Progress:
-    """Persists pipeline progress, throttled, and detects cancellation between stages."""
+    """Records pipeline progress as running-log events and persists them, throttled. Detects cancellation at each
+    stage start and flush.
+
+    Called as ``progress(stage, percent)`` to start a stage and ``progress(stage, percent, message, path=, step=,
+    level=)`` for a detail inside it (see eval_engine.pipeline.Progress)."""
 
     def __init__(self, audit: Audit):
         self.audit = audit
         self._last = 0.0
+        self._events: deque[dict] = deque(audit.activity or [], maxlen=ACTIVITY_LIMIT)
+        self._seq = self._events[-1]["seq"] if self._events else 0
 
-    def __call__(self, stage: str, percent: int, message: str = "") -> None:
+    def __call__(self, stage: str, percent: int, message: str = "", *, path: str = "", step: int | None = None,
+                 level: str = "") -> None:
         now = time.monotonic()
+        percent = max(0, min(100, int(percent)))
+        self._seq += 1
+        event = {"seq": self._seq, "t": utcnow().isoformat(timespec="seconds"), "stage": stage[:64], "pct": percent}
+        if message:
+            event.update(msg=message[:300], path=path[:512], step=step, level=level)
+        self._events.append(event)
         self.audit.stage = stage[:64]
-        self.audit.progress = max(0, min(100, int(percent)))
-        if now - self._last >= STAGE_PROGRESS_FLUSH_SECONDS or percent >= 100:
-            db.session.commit()
-            self._last = now
+        self.audit.progress = percent
+        # Per-file lines are throttled; stage starts and notes (which may precede a long silent step) persist at once.
+        if path and now - self._last < STAGE_PROGRESS_FLUSH_SECONDS and percent < 100:
+            return
+        self.audit.activity = list(self._events)
+        db.session.commit()
+        self._last = now
         status = db.session.execute(db.select(Audit.status).where(Audit.id == self.audit.id)).scalar_one()
         if status == "cancelled":
             raise _Cancelled()
+
+    def flush(self) -> None:
+        self.audit.activity = list(self._events)
 
 
 class _Cancelled(Exception):
@@ -71,8 +92,13 @@ def run_audit(self, audit_id: str) -> str:
     workdir = Path(cfg.get("WORK_DIR") or cfg["DATA_DIR"] / "work") / audit_id
     progress = _Progress(audit)
     try:
-        progress("fetching source", 2)
-        root = prepare_workspace(audit, workdir, limits)
+        progress("fetching source", 1)
+        root = prepare_workspace(
+            audit, workdir, limits,
+            on_progress=lambda pct, msg, path: progress("fetching source", 1 + 4 * pct // 100, msg, path=path,
+                                                        step=pct),
+        )
+        progress("fetching source", 5, f"source ready · {audit.commit_sha[:12]}", step=100, level="ok")
         policy, notes = effective_policy(audit, root)
         audit.policy = policy.to_dict()
         if notes:
@@ -111,6 +137,7 @@ def run_audit(self, audit_id: str) -> str:
         _fail(audit, "Internal error while auditing. The incident was logged.")
     finally:
         remove_tree(workdir)
+    progress.flush()  # a rollback above discards unflushed log lines; keep them with the failure
     audit.finished_at = utcnow()
     db.session.commit()
     _report(audit)

@@ -56,8 +56,10 @@ def detail(org_slug, audit_id):
 @org_required()
 def status(org_slug, audit_id):
     audit = get_scoped_or_404(Audit, audit_id)
+    after = request.args.get("after", 0, type=int)
     return jsonify(status=audit.status, stage=audit.stage, progress=audit.progress,
-                   error=audit.error if audit.status == "failed" else "")
+                   error=audit.error if audit.status == "failed" else "",
+                   log=[e for e in audit.activity or [] if e.get("seq", 0) > after])
 
 
 @bp.post("/<audit_id>/cancel")

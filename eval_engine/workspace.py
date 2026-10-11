@@ -15,12 +15,15 @@ from __future__ import annotations
 
 import base64
 import os
+import queue
 import re
 import shutil
 import stat
 import tempfile
+import threading
+import time
 import zipfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
@@ -52,6 +55,17 @@ class Limits:
 
 
 DEFAULT_LIMITS = Limits()
+
+# Fetch progress: (percent of the fetch, message, repository-relative path or "").
+FetchProgress = Callable[[int, str, str], None]
+
+
+def human_size(n: int) -> str:
+    if n < 1024:
+        return f"{n} B"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.1f} KB"
+    return f"{n / (1024 * 1024):.1f} MB"
 
 
 @dataclass
@@ -108,8 +122,11 @@ def _is_special(info: zipfile.ZipInfo) -> bool:
     return bool(file_type) and not (stat.S_ISREG(mode) or stat.S_ISDIR(mode) or stat.S_ISLNK(mode))
 
 
-def extract_zip(zip_path: Path, dest: Path, limits: Limits = DEFAULT_LIMITS) -> ExtractStats:
-    """Safely extract ``zip_path`` into the (empty or new) directory ``dest``."""
+def extract_zip(
+    zip_path: Path, dest: Path, limits: Limits = DEFAULT_LIMITS, on_progress: FetchProgress | None = None
+) -> ExtractStats:
+    """Safely extract ``zip_path`` into the (empty or new) directory ``dest``. ``on_progress`` is told about each
+    member as it is written (or skipped)."""
     dest.mkdir(parents=True, exist_ok=True)
     stats = ExtractStats()
     try:
@@ -122,6 +139,13 @@ def extract_zip(zip_path: Path, dest: Path, limits: Limits = DEFAULT_LIMITS) -> 
         if len(members) > limits.max_files * 2:
             raise WorkspaceError("Archive has too many entries.")
         prefix = _common_top_level_dir(members)
+        total = sum(1 for m in members if not m.is_dir()) or 1
+        seen = 0
+
+        def report(message: str, rel: PurePosixPath) -> None:
+            if on_progress is not None:
+                on_progress(min(100, seen * 100 // total), message, str(rel))
+
         for info in members:
             rel = validate_relative_path(info.filename, limits)
             if prefix is not None:
@@ -130,17 +154,22 @@ def extract_zip(zip_path: Path, dest: Path, limits: Limits = DEFAULT_LIMITS) -> 
                     continue
             if info.flag_bits & 0x1:
                 raise WorkspaceError("Encrypted archive members are not supported.")
+            if not info.is_dir():
+                seen += 1
             if _is_symlink(info):
                 stats.skipped.append(f"{rel} (symlink)")
+                report("skipped (symlink)", rel)
                 continue
             if _is_special(info):
                 stats.skipped.append(f"{rel} (special file)")
+                report("skipped (special file)", rel)
                 continue
             if info.is_dir():
                 safe_join(dest, rel).mkdir(parents=True, exist_ok=True)
                 continue
             if info.file_size > limits.max_file_bytes:
                 stats.skipped.append(f"{rel} (exceeds per-file size limit)")
+                report("skipped (exceeds per-file size limit)", rel)
                 continue
             if info.compress_size and info.file_size / max(info.compress_size, 1) > limits.max_compression_ratio:
                 raise WorkspaceError("Archive compression ratio is suspicious (possible zip bomb).")
@@ -159,6 +188,7 @@ def extract_zip(zip_path: Path, dest: Path, limits: Limits = DEFAULT_LIMITS) -> 
                         raise WorkspaceError("Archive exceeds the total extracted size limit.")
                     out.write(chunk)
             stats.bytes += written
+            report(f"extracted · {human_size(written)}", rel)
     return stats
 
 
@@ -260,8 +290,11 @@ def clone_repo(
     allowed_hosts: list[str] | None = None,
     timeout: int = 300,
     limits: Limits = DEFAULT_LIMITS,
+    on_progress: FetchProgress | None = None,
 ) -> CloneResult:
-    """Shallow-fetch exactly ``ref`` (branch, tag, or commit SHA) into ``dest`` using GitPython."""
+    """Shallow-fetch exactly ``ref`` (branch, tag, or commit SHA) into ``dest`` using GitPython.
+
+    ``on_progress`` receives git's transfer progress (the first 70%), then every file of the checked-out commit."""
     import git  # GitPython; imported lazily so the engine works without it for ZIP-only use
 
     validate_git_url(url, allowed_hosts or ["github.com"])
@@ -275,10 +308,16 @@ def clone_repo(
         try:
             g.init("--quiet", "--template=")
             g.remote("add", "origin", url)
-            _git_with_timeout(g, ["fetch", "--depth=1", "--no-tags", "--no-recurse-submodules", "origin", ref],
-                              timeout, token)
+            fetch = ["fetch", "--depth=1", "--no-tags", "--no-recurse-submodules"]
+            if on_progress is not None:
+                on_progress(0, f"connecting to {urlsplit(url).hostname}, fetching {ref}", "")
+                fetch.append("--progress")
+            _git_with_timeout(g, [*fetch, "origin", ref], timeout, token,
+                              on_line=_transfer_reporter(on_progress) if on_progress else None)
             _git_with_timeout(g, ["checkout", "--force", "--detach", "FETCH_HEAD"], timeout, token)
             sha = g.rev_parse("HEAD").strip()
+            if on_progress is not None:
+                _report_tree(g.ls_tree("-r", "-l", "-z", "HEAD"), on_progress)
         except git.GitCommandError as exc:
             raise WorkspaceError(_sanitize_git_error(exc, token)) from None
     finally:
@@ -287,25 +326,115 @@ def clone_repo(
     return CloneResult(commit_sha=sha, ref=ref)
 
 
-def _git_with_timeout(g, args: list[str], timeout: int, token: str | None) -> None:
+_TRANSFER_RE = re.compile(r"^(?:remote: )?(Counting objects|Compressing objects|Receiving objects|Resolving deltas)"
+                          r":\s+(\d{1,3})%\s*(\(\d+/\d+\))?")
+# Each git transfer phase's share of the fetch progress (the remaining 30% is the checked-out tree).
+_TRANSFER_SPAN = {"Counting objects": (0, 5), "Compressing objects": (5, 10), "Receiving objects": (10, 60),
+                  "Resolving deltas": (60, 70)}
+
+
+def _transfer_reporter(on_progress: FetchProgress) -> Callable[[str], None]:
+    last: dict[str, int] = {}
+
+    def on_line(line: str) -> None:
+        match = _TRANSFER_RE.match(line.strip())
+        if not match:
+            return
+        phase, pct = match.group(1), int(match.group(2))
+        # git rewrites the line for every object; report each 10% step (and completion) once.
+        step = 100 if pct >= 100 else pct // 10 * 10
+        if last.get(phase, -1) >= step:
+            return
+        last[phase] = step
+        lo, hi = _TRANSFER_SPAN[phase]
+        counts = f" {match.group(3)}" if match.group(3) else ""
+        on_progress(lo + (hi - lo) * pct // 100, f"{phase.lower()} {pct}%{counts}", "")
+
+    return on_line
+
+
+def _report_tree(listing: str, on_progress: FetchProgress) -> None:
+    """Report each blob of ``git ls-tree -r -l -z`` output: the files actually checked out, with their sizes."""
+    entries = []
+    for record in listing.split("\0"):
+        meta, sep, path = record.partition("\t")
+        fields = meta.split()
+        if sep and len(fields) == 4 and fields[1] == "blob":
+            entries.append((path, int(fields[3]) if fields[3].isdigit() else 0))
+    total = len(entries) or 1
+    for i, (path, size) in enumerate(entries, 1):
+        on_progress(70 + 30 * i // total, f"checked out · {human_size(size)}", path)
+
+
+def _git_with_timeout(g, args: list[str], timeout: int, token: str | None,
+                      on_line: Callable[[str], None] | None = None) -> None:
     """Run a git subcommand via GitPython with a portable wall-clock timeout.
 
-    GitPython's ``kill_after_timeout`` is unsupported on Windows, so the process is driven directly."""
+    GitPython's ``kill_after_timeout`` is unsupported on Windows, so the process is driven directly. With ``on_line``,
+    stderr is streamed (split on git's carriage-return progress updates) and each line is passed to it on this
+    thread."""
     import subprocess  # nosec B404
 
     proc = g.execute(["git", *args], as_process=True)
-    try:
-        _out, err = proc.proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        proc.proc.kill()
-        proc.proc.communicate()
-        raise WorkspaceError("Fetching the repository timed out.") from None
+    if on_line is None:
+        try:
+            _out, err = proc.proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            proc.proc.kill()
+            proc.proc.communicate()
+            raise WorkspaceError("Fetching the repository timed out.") from None
+    else:
+        err = _stream_stderr(proc.proc, timeout, on_line)
     if proc.proc.returncode != 0:
 
         class _Err(Exception):
             stderr = (err or b"").decode("utf-8", "replace")
 
         raise WorkspaceError(_sanitize_git_error(_Err(), token))
+
+
+def _stream_stderr(p, timeout: int, on_line: Callable[[str], None]) -> bytes:
+    lines: queue.Queue = queue.Queue()
+    captured = bytearray()
+
+    def read_stderr() -> None:
+        pending = b""
+        read = getattr(p.stderr, "read1", p.stderr.read)  # read1 returns what is available instead of blocking
+        while chunk := read(4096):
+            captured.extend(chunk)
+            pending += chunk
+            *done, pending = re.split(rb"[\r\n]", pending)
+            for line in done:
+                if line:
+                    lines.put(line.decode("utf-8", "replace"))
+        if pending:
+            lines.put(pending.decode("utf-8", "replace"))
+
+    def drain_stdout() -> None:
+        while p.stdout is not None and p.stdout.read(4096):
+            pass
+
+    readers = [threading.Thread(target=read_stderr, daemon=True), threading.Thread(target=drain_stdout, daemon=True)]
+    for t in readers:
+        t.start()
+    deadline = time.monotonic() + timeout
+    while readers[0].is_alive() or not lines.empty():
+        if time.monotonic() > deadline:
+            p.kill()
+            p.wait()
+            raise WorkspaceError("Fetching the repository timed out.")
+        try:
+            on_line(lines.get(timeout=0.2))
+        except queue.Empty:
+            continue
+    try:
+        p.wait(timeout=max(1, deadline - time.monotonic()))
+    except Exception:  # noqa: BLE001 - subprocess.TimeoutExpired
+        p.kill()
+        p.wait()
+        raise WorkspaceError("Fetching the repository timed out.") from None
+    readers[1].join(timeout=1)
+    return bytes(captured)
 
 
 def _sanitize_git_error(exc: Exception, token: str | None) -> str:
@@ -345,8 +474,16 @@ def enforce_tree_limits(root: Path, limits: Limits) -> None:
 # --------------------------------------------------------------------------------------------- walk
 
 
-def iter_files(root: Path, *, max_file_bytes: int = 2 * 1024 * 1024, skip_dirs=SKIP_DIRS) -> Iterator[str]:
-    """Yield POSIX relative paths of regular files under ``root``. Never follows symlinks."""
+def iter_files(
+    root: Path,
+    *,
+    max_file_bytes: int = 2 * 1024 * 1024,
+    skip_dirs=SKIP_DIRS,
+    on_entry: Callable[[str, int, str], None] | None = None,
+) -> Iterator[str]:
+    """Yield POSIX relative paths of regular files under ``root``. Never follows symlinks.
+
+    ``on_entry(path, size, skip_reason)`` sees every file looked at, including the ones not yielded."""
     root = root.resolve()
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
         dirnames[:] = sorted(
@@ -358,9 +495,22 @@ def iter_files(root: Path, *, max_file_bytes: int = 2 * 1024 * 1024, skip_dirs=S
                 st = os.lstat(full)
             except OSError:
                 continue
-            if not stat.S_ISREG(st.st_mode) or st.st_size > max_file_bytes:
-                continue
-            yield Path(full).relative_to(root).as_posix()
+            skip = ("not a regular file" if not stat.S_ISREG(st.st_mode)
+                    else "exceeds the per-file size limit" if st.st_size > max_file_bytes else "")
+            rel = Path(full).relative_to(root).as_posix()
+            if on_entry is not None:
+                on_entry(rel, st.st_size, skip)
+            if not skip:
+                yield rel
+
+
+def count_files(root: Path, *, skip_dirs=SKIP_DIRS) -> int:
+    """Number of directory entries ``iter_files`` will look at (for progress reporting)."""
+    count = 0
+    for dirpath, dirnames, filenames in os.walk(root.resolve(), followlinks=False):
+        dirnames[:] = [d for d in dirnames if d not in skip_dirs and not os.path.islink(os.path.join(dirpath, d))]
+        count += len(filenames)
+    return count
 
 
 def read_text(root: Path, rel: str, max_bytes: int = 2 * 1024 * 1024) -> str | None:

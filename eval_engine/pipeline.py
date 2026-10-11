@@ -24,13 +24,33 @@ from .findings import SEVERITY_RANK, Confidence, Finding, FindingKind
 from .languages import LanguageReport, detect
 from .redaction import redact
 from .scoring import ScoreCard, score
-from .workspace import Limits, WorkspaceError, iter_files
+from .workspace import Limits, WorkspaceError, count_files, human_size, iter_files
 
-Progress = Callable[[str, int, str], None]
+# progress(stage, percent) marks the start of a stage; progress(stage, percent, message, path=, step=, level=) reports
+# a detail inside it: ``path`` the file it concerns, ``step`` the stage's own percent (None when unknown), ``level``
+# "ok" | "warn" | "error" | "" for outcome lines.
+Progress = Callable[..., None]
 
 
-def _noop(stage: str, percent: int, message: str = "") -> None:
+def _noop(stage: str, percent: int, message: str = "", **detail: Any) -> None:
     return None
+
+
+class _Stage:
+    """One pipeline stage spanning the overall percent range [lo, hi]."""
+
+    def __init__(self, progress: Progress, name: str, lo: int, hi: int):
+        self.progress, self.name, self.lo, self.hi = progress, name, lo, hi
+        progress(name, lo, "")
+
+    def detail(self, message: str, *, done: int | None = None, total: int | None = None, path: str = "",
+               level: str = "") -> None:
+        if done is not None and total:
+            done = min(done, total)
+            pct, step = self.lo + (self.hi - self.lo) * done // total, done * 100 // total
+        else:
+            pct, step = self.lo, None
+        self.progress(self.name, pct, message, path=path, step=step, level=level)
 
 
 @dataclass
@@ -84,7 +104,9 @@ class AuditResult:
         }
 
 
-def run_analyzer(analyzer: Analyzer, ctx: AnalyzerContext) -> AnalyzerOutcome:
+def run_analyzer(analyzer: Analyzer, ctx: AnalyzerContext,
+                 on_start: Callable[[], None] | None = None) -> AnalyzerOutcome:
+    """``on_start`` is called once the analyzer is known to run (after the applicability checks)."""
     from . import sandbox
 
     outcome = AnalyzerOutcome(
@@ -106,6 +128,8 @@ def run_analyzer(analyzer: Analyzer, ctx: AnalyzerContext) -> AnalyzerOutcome:
         if needs:
             outcome.status, outcome.reason = "skipped", f"offline mode: {needs}"
             return outcome
+    if on_start is not None:
+        on_start()
     start = time.monotonic()
     try:
         outcome.findings = analyzer.run(ctx)
@@ -119,6 +143,32 @@ def run_analyzer(analyzer: Analyzer, ctx: AnalyzerContext) -> AnalyzerOutcome:
     if outcome.status != "ok":
         outcome.findings = []
     return outcome
+
+
+def _analysis_reporter(analyzer: Analyzer, ctx: AnalyzerContext, stage: _Stage) -> Callable[[], None]:
+    """Report the start of an analyzer that runs, then each distinct file it reads."""
+
+    def on_start() -> None:
+        stage.detail(f"running {analyzer.tool} in the sandbox" if analyzer.tool else "reading source files")
+        scanned: set[str] = set()
+
+        def on_read(rel: str) -> None:
+            if rel not in scanned:
+                scanned.add(rel)
+                stage.detail(f"scanned · file {len(scanned)}", path=rel)
+
+        ctx.on_read = on_read
+
+    return on_start
+
+
+def _outcome_line(outcome: AnalyzerOutcome) -> tuple[str, str]:
+    if outcome.status == "ok":
+        n = len(outcome.findings)
+        return f"{n} finding{'s' if n != 1 else ''} · {outcome.duration:.1f}s", "ok"
+    if outcome.status == "skipped":
+        return f"skipped · {outcome.reason}", ""
+    return f"{outcome.status} · {outcome.reason}", "error" if outcome.status == "failed" else "warn"
 
 
 def _run_ai(enricher, findings: list[Finding], languages, card, ctx) -> tuple[dict, list[Finding]]:
@@ -145,15 +195,30 @@ def run_pipeline(root: Path, config: PipelineConfig | None = None) -> AuditResul
     progress = config.progress or _noop
     started = time.monotonic()
 
-    progress("inspecting repository", 5, "")
+    stage = _Stage(progress, "inspecting repository", 5, 8)
+    entries, seen, skipped = count_files(root), 0, 0
     files = []
-    for rel in iter_files(root, max_file_bytes=config.limits.max_file_bytes):
+
+    def on_entry(rel: str, size: int, skip: str) -> None:
+        nonlocal seen, skipped
+        seen += 1
+        skipped += bool(skip)
+        stage.detail(f"skipped · {skip}" if skip else f"inspected · {human_size(size)}", done=seen, total=entries,
+                     path=rel, level="warn" if skip else "")
+
+    for rel in iter_files(root, max_file_bytes=config.limits.max_file_bytes, on_entry=on_entry):
         files.append(rel)
         if len(files) > config.limits.max_files:
             raise WorkspaceError(f"Repository exceeds the {config.limits.max_files} file limit.")
+    stage.detail(f"{len(files)} files to analyze" + (f", {skipped} skipped" if skipped else ""),
+                 done=entries, total=entries, level="ok")
 
-    progress("detecting languages", 10, "")
-    languages = detect(root, files)
+    stage = _Stage(progress, "detecting languages", 8, 12)
+    languages = detect(root, files, on_file=lambda i, rel, desc: stage.detail(desc, done=i + 1, total=len(files),
+                                                                              path=rel))
+    found = ", ".join(f"{lang} ({n})" for lang, n in languages.files_by_language.items()) or "no source files"
+    stage.detail(f"{found}" + (f" · frameworks: {', '.join(languages.frameworks)}" if languages.frameworks else ""),
+                 done=1, total=1, level="ok")
     ctx = AnalyzerContext(root=root, files=files, languages=languages, timeout=config.tool_timeout,
                           offline=config.offline)
 
@@ -161,45 +226,71 @@ def run_pipeline(root: Path, config: PipelineConfig | None = None) -> AuditResul
     if config.policy is not None and config.policy.disable_analyzers:
         analyzers = [a for a in analyzers if a.name not in config.policy.disable_analyzers]
     outcomes: list[AnalyzerOutcome] = []
+    n_analyzers = max(len(analyzers), 1)
     for i, analyzer in enumerate(analyzers):
-        progress(f"analyzing: {analyzer.title}", 15 + int(60 * i / max(len(analyzers), 1)), "")
-        outcomes.append(run_analyzer(analyzer, ctx))
+        stage = _Stage(progress, f"analyzing: {analyzer.title}", 15 + 60 * i // n_analyzers,
+                       15 + 60 * (i + 1) // n_analyzers)
+        outcomes.append(run_analyzer(analyzer, ctx, on_start=_analysis_reporter(analyzer, ctx, stage)))
+        ctx.on_read = None
+        message, level = _outcome_line(outcomes[-1])
+        stage.detail(message, done=1, total=1, level=level)
 
-    progress("validating and deduplicating findings", 78, "")
+    stage = _Stage(progress, "validating and deduplicating findings", 78, 85)
     raw = [f for o in outcomes for f in o.findings]
     findings, dropped = validate(raw, set(files), lambda p: len(ctx.lines(p)))
+    stage.detail(f"{len(raw)} raw findings · {len(findings)} valid"
+                 + (f" · {dropped} dropped (outside the repository)" if dropped else ""), done=1, total=5)
 
     def source_line(path: str, line: int) -> str:
         lines = ctx.lines(path)
         return lines[line - 1] if 0 < line <= len(lines) else ""
 
     fingerprint.compute(findings, source_line, family_of)
+    before = len(findings)
     findings = merge_duplicates(findings)
+    stage.detail(f"{before - len(findings)} duplicates merged · {len(findings)} distinct", done=2, total=5)
     policy_stats = None
     if config.policy is not None:
         from .policy import apply as apply_policy
 
+        before = len(findings)
         findings, effect = apply_policy(config.policy, findings)
         policy_stats = {"digest": config.policy.digest, "sources": config.policy.sources, **effect.to_dict()}
+        stage.detail(f"policy applied · {before - len(findings)} findings excluded", done=3, total=5)
     from .reachability import annotate as annotate_reachability
 
     reach = annotate_reachability(findings, ctx)
+    stage.detail("reachability annotated", done=4, total=5)
     prev = config.previous_fingerprints or PreviousState()
     lifecycle = classify(findings, prev.previous, prev.ever_seen)
+    stage.detail(f"{lifecycle.new} new · {lifecycle.existing} existing · {lifecycle.recurring} recurring · "
+                 f"{len(lifecycle.resolved)} resolved", done=5, total=5, level="ok")
 
-    progress("scoring", 85, "")
+    stage = _Stage(progress, "scoring", 85, 88)
     assessed = {c for o in outcomes if o.status == "ok" for c in o.categories}
     card = score(findings, assessed)
+    categories = list(card.categories.values())
+    for i, cat in enumerate(categories, 1):
+        line = (f"{cat.category}: {cat.score:.0f}/100 · {cat.findings} findings"
+                if cat.assessed and cat.score is not None else f"{cat.category}: not assessed")
+        stage.detail(line, done=i, total=len(categories))
+    overall = f"{card.overall:.0f}/100" if card.overall is not None else "n/a"
+    stage.detail(f"overall {overall} · risk {card.risk}", done=1, total=1, level="ok")
 
     ai_summary: dict = {}
     if config.ai is not None:
-        progress("AI-assisted analysis", 88, "")
+        stage = _Stage(progress, "AI-assisted analysis", 88, 95)
+        stage.detail(f"explaining up to {len(findings)} findings")
         try:
             ai_summary, extra = _run_ai(config.ai, findings, languages, card, ctx)
         except Exception as exc:  # noqa: BLE001 - optional stage; the deterministic audit still stands
             ai_summary, extra = {"error": f"AI analysis failed ({type(exc).__name__})"}, []
         fingerprint.compute(extra, source_line, family_of)
         findings.extend(extra)
+        if ai_summary.get("error"):
+            stage.detail(ai_summary["error"], done=1, total=1, level="warn")
+        else:
+            stage.detail(f"done · {len(extra)} AI observations added", done=1, total=1, level="ok")
 
     findings.sort(key=lambda f: (-SEVERITY_RANK[f.severity], str(f.category), f.file_path, f.line_start or 0))
     stats = {

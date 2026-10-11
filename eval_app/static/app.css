@@ -1143,6 +1143,76 @@ pre.evidence {
 .w-fit { width: 1%; white-space: nowrap; }
 
 .audit-log summary { cursor: pointer; font-weight: 600; font-size: .78rem; color: var(--fg-2); }
-.audit-log-entries { max-height: 16rem; overflow-y: auto; padding: .6rem .9rem; margin: .5rem 0 0; background: var(--term-bg); color: var(--term-fg); border: 1px solid var(--term-line); border-radius: var(--radius-sm); font-size: .76rem; list-style: none; }
-.audit-log-entries time { color: var(--term-dim); margin-right: .45rem; }
+.audit-log-entries { max-height: 22rem; overflow-y: auto; padding: .6rem .9rem; margin: .5rem 0 0; background: var(--term-bg); color: var(--term-fg); border: 1px solid var(--term-line); border-radius: var(--radius-sm); font-size: .76rem; line-height: 1.55; list-style: none; }
+.audit-log-entries time { color: var(--term-dim); margin-right: .45rem; font-variant-numeric: tabular-nums; }
+.audit-log-entries li { display: flex; align-items: baseline; gap: .45rem; min-width: 0; white-space: nowrap; }
+.audit-log-entries li > time { flex: none; margin-right: 0; }
+.audit-log-entries .bi { flex: none; color: var(--term-dim); font-size: .72rem; }
+
+/* stage headers */
+.alog-stage { margin-top: .45rem; color: var(--term-fg); }
+.alog-stage:first-child { margin-top: 0; }
+.alog-stage .bi { color: var(--term-accent) !important; }
+.alog-stage b { font-weight: 600; }
+.alog-pct { color: var(--term-dim); }
+.alog-gap { color: var(--term-dim); font-style: italic; }
+
+/* detail lines */
+.alog-step { flex: none; width: 2.6em; text-align: right; color: var(--term-dim); white-space: pre; font-variant-numeric: tabular-nums; }
+.alog-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--term-accent); }
+.alog-msg { flex: none; color: var(--term-dim); }
+.alog-item.is-ok .alog-msg { color: var(--term-ok); }
+.alog-item.is-warn .alog-msg { color: var(--term-warn); }
+.alog-item.is-error .alog-msg { color: var(--term-crit); }
+.alog-item.is-ok .alog-msg::before { content: "✓ "; }
+.alog-item.is-error .alog-msg::before { content: "✗ "; }
+.alog-fetch .alog-path { color: #b8a6ff; }
+.alog-lang .alog-path { color: var(--term-fg); }
+
+/* new lines: a short slide-in; inspected files get a magnifier pass */
+.alog-item.is-new { animation: alog-in .28s ease-out; }
+.alog-inspect.is-new .alog-path { animation: alog-magnify .55s ease-out; transform-origin: left center; }
+.alog-inspect.is-new .bi { animation: alog-lens-icon .55s ease-out; }
+@keyframes alog-in { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: none; } }
+@keyframes alog-magnify {
+  0% { transform: scale(1.22); color: #fff; text-shadow: 0 0 10px rgba(92, 207, 230, .7); }
+  60% { transform: scale(1.04); }
+  100% { transform: scale(1); text-shadow: none; }
+}
+@keyframes alog-lens-icon { 0% { transform: scale(1.6) rotate(-20deg); color: var(--term-accent); } 100% { transform: none; } }
+
+/* the "now" line: current stage, its own progress, and the file being worked on */
+.alog-now { display: flex; align-items: center; gap: .55rem; min-width: 0; margin-top: .5rem; padding: .45rem .7rem; background: var(--term-bar); border: 1px solid var(--term-line); border-radius: var(--radius-sm); font-size: .76rem; }
+.alog-now-icon { flex: none; color: var(--term-accent); }
+.alog-now-stage { flex: none; font-weight: 600; color: var(--term-fg); }
+.alog-now-bar { flex: none; position: relative; width: 5.5rem; height: 4px; overflow: hidden; background: var(--term-line); border-radius: 2px; }
+.alog-now-bar > span { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--term-accent); border-radius: 2px; transition: width .2s ease-out; }
+.alog-now.is-busy .alog-now-bar > span { width: 35% !important; animation: alog-busy 1.1s ease-in-out infinite; }
+@keyframes alog-busy { from { left: -35%; } to { left: 100%; } }
+.alog-now-pct { flex: none; min-width: 2.6em; color: var(--term-dim); font-variant-numeric: tabular-nums; }
+.alog-now-path { position: relative; min-width: 0; padding: 0 .2rem; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--term-accent); }
+/* Inspecting: a lens sweeps the file name while it is enlarged under it. */
+.alog-now.is-inspect .alog-now-icon { animation: alog-hover 1.4s ease-in-out infinite; }
+.alog-now.is-inspect .alog-now-path.is-new { animation: alog-magnify .6s ease-out; transform-origin: left center; }
+.alog-now.is-inspect .alog-now-path.is-new::after {
+  content: ""; position: absolute; top: 50%; left: 0; width: 1.5em; height: 1.5em; margin-top: -.75em;
+  border: 2px solid var(--term-accent); border-radius: 50%; background: radial-gradient(circle, rgba(92, 207, 230, .18), transparent 70%);
+  box-shadow: 0 0 8px rgba(92, 207, 230, .5); animation: alog-sweep .6s ease-in-out forwards; pointer-events: none;
+}
+@keyframes alog-sweep { from { left: 0; opacity: 1; } 85% { opacity: 1; } to { left: calc(100% - 1.5em); opacity: 0; } }
+@keyframes alog-hover { 0%, 100% { transform: translate(0, 0); } 50% { transform: translate(2px, -2px) scale(1.12); } }
+.alog-now.is-fetch .alog-now-icon { animation: alog-drop 1s ease-in-out infinite; }
+@keyframes alog-drop { 0%, 100% { transform: translateY(-1px); } 50% { transform: translateY(2px); } }
+.alog-now.is-scan .alog-now-path.is-new { animation: alog-in .25s ease-out; }
+
+@media (max-width: 575.98px) {
+  .alog-now { flex-wrap: wrap; }
+  .alog-now-path { flex-basis: 100%; }
+  .alog-msg { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .alog-item.is-new, .alog-item.is-new .alog-path, .alog-item.is-new .bi, .alog-now-icon, .alog-now-path.is-new,
+  .alog-now-path.is-new::after, .alog-now.is-busy .alog-now-bar > span { animation: none !important; }
+  .alog-now-path.is-new::after { display: none; }
+}
 

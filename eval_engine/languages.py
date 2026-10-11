@@ -6,6 +6,7 @@ import json
 import re
 import tomllib
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -74,24 +75,32 @@ MANIFESTS = (
 )
 
 
-def detect(root: Path, files: list[str]) -> LanguageReport:
+def detect(root: Path, files: list[str], on_file: Callable[[int, str, str], None] | None = None) -> LanguageReport:
+    """``on_file(index, path, description)`` is called for every file classified as source or a manifest."""
     files_count: Counter[str] = Counter()
     lines: Counter[str] = Counter()
     manifests = []
-    for rel in files:
+    for i, rel in enumerate(files):
         name = rel.rsplit("/", 1)[-1]
-        if name in MANIFESTS or name.startswith("requirements") and name.endswith(".txt"):
+        manifest = name in MANIFESTS or name.startswith("requirements") and name.endswith(".txt")
+        if manifest:
             manifests.append(rel)
         lang = EXTENSIONS.get(Path(name).suffix.lower())
         if lang is None:
             if name == "Dockerfile" or name.startswith("Dockerfile."):
                 lang = "dockerfile"
             else:
+                if manifest and on_file is not None:
+                    on_file(i, rel, "dependency manifest")
                 continue
         files_count[lang] += 1
         text = read_text(root, rel, max_bytes=1024 * 1024)
+        n = 0
         if text is not None:
-            lines[lang] += text.count("\n") + (0 if text.endswith("\n") or not text else 1)
+            n = text.count("\n") + (0 if text.endswith("\n") or not text else 1)
+            lines[lang] += n
+        if on_file is not None:
+            on_file(i, rel, f"{lang} · {n} lines" + (" · manifest" if manifest else ""))
     return LanguageReport(
         files_by_language=dict(files_count.most_common()),
         lines_by_language=dict(lines.most_common()),

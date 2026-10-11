@@ -4,7 +4,7 @@ from pathlib import Path
 
 from flask import current_app
 
-from eval_engine.workspace import Limits, WorkspaceError, clone_repo, extract_zip, remove_tree
+from eval_engine.workspace import FetchProgress, Limits, WorkspaceError, clone_repo, extract_zip, remove_tree
 
 from ..extensions import db
 from ..integrations.services import CredentialError, github_clone_url, repo_token
@@ -12,14 +12,16 @@ from ..models import Audit
 from ..projects.repositories import upload_path
 
 
-def fetch_source(audit: Audit, src: Path, limits: Limits, ref: str | None = None) -> tuple[str, list]:
+def fetch_source(audit: Audit, src: Path, limits: Limits, ref: str | None = None,
+                 on_progress: FetchProgress | None = None) -> tuple[str, list]:
     """Fetch the audit's source into the existing empty directory ``src``. Returns (commit sha, skipped archive
-    members). ``ref`` defaults to the requested ref; pass the audited commit to get exactly that tree again."""
+    members). ``ref`` defaults to the requested ref; pass the audited commit to get exactly that tree again.
+    ``on_progress`` is told about each file as it is extracted or checked out."""
     repo = audit.repository
     if repo.source == "upload":
         if audit.upload is None:
             raise WorkspaceError("The uploaded archive is no longer available.")
-        stats = extract_zip(upload_path(audit.upload), src, limits)
+        stats = extract_zip(upload_path(audit.upload), src, limits, on_progress=on_progress)
         return audit.upload.sha256[:12], stats.skipped
     try:
         token = repo_token(repo)
@@ -33,17 +35,18 @@ def fetch_source(audit: Audit, src: Path, limits: Limits, ref: str | None = None
         allowed_hosts=current_app.config["GIT_ALLOWED_HOSTS"],
         timeout=current_app.config["ANALYZER_TIMEOUT_SECONDS"],
         limits=limits,
+        on_progress=on_progress,
     )
     remove_tree(src / ".git")  # analyzers never need git metadata; avoids leaking remote config
     return result.commit_sha, []
 
 
-def prepare_workspace(audit: Audit, workdir: Path, limits: Limits) -> Path:
+def prepare_workspace(audit: Audit, workdir: Path, limits: Limits, on_progress: FetchProgress | None = None) -> Path:
     """Materialize the audited source under ``workdir/src``. Never executes repository content."""
     remove_tree(workdir)
     src = workdir / "src"
     src.mkdir(parents=True)
-    audit.commit_sha, skipped = fetch_source(audit, src, limits)
+    audit.commit_sha, skipped = fetch_source(audit, src, limits, on_progress=on_progress)
     if audit.repository.source == "upload":
         audit.stats = {**(audit.stats or {}), "extract_skipped": skipped[:50]}
     db.session.commit()

@@ -126,8 +126,9 @@ def main(argv: list[str] | None = None) -> int:
         enricher = Enricher(provider, max_findings=args.ai_max_findings, max_tokens=LOCAL_MAX_TOKENS,
                             batch_size=args.ai_batch_size)
 
-    def progress(stage: str, pct: int, _msg: str = "") -> None:
-        print(f"[{pct:3d}%] {stage}", file=sys.stderr)
+    def progress(stage: str, pct: int, msg: str = "", **_detail) -> None:
+        if not msg:  # stage starts only; per-file details are for the web UI's running log
+            print(f"[{pct:3d}%] {stage}", file=sys.stderr)
 
     blocked: list[str] = []
     try:

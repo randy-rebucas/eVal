@@ -322,3 +322,48 @@ def test_running_audit_shows_toggleable_progress_log(alice, db):
     assert b"<details class=\"audit-log" in page.data
     assert b"<summary>Running logs</summary>" in page.data
     assert b"analyzing: Ruff" in page.data and b"25%" in page.data
+
+
+def test_running_log_records_real_files_stage_by_stage(alice, db):
+    c, org = alice["client"], alice["org"]
+    pid = make_project(c, org)
+    upload_new(c, org, pid, zip_bytes(FIXTURES / "vulnapp"))
+    audit = db.session.execute(db.select(Audit)).scalar_one()
+    log = audit.activity
+    assert log and [e["seq"] for e in log] == sorted(e["seq"] for e in log)
+    stages = [e["stage"] for e in log if "msg" not in e]
+    assert stages[:3] == ["fetching source", "inspecting repository", "detecting languages"]
+    assert any(s.startswith("analyzing: ") for s in stages) and "scoring" in stages
+    by_stage = {}
+    for e in log:
+        if e.get("path"):
+            by_stage.setdefault(e["stage"], set()).add(e["path"])
+    archive = {p.relative_to(FIXTURES / "vulnapp").as_posix() for p in (FIXTURES / "vulnapp").rglob("*") if p.is_file()}
+    assert by_stage["fetching source"] <= archive and by_stage["fetching source"]
+    assert by_stage["inspecting repository"] and by_stage["detecting languages"]
+    assert any(e["stage"] == "fetching source" and e.get("step") == 100 for e in log)
+
+    # the page renders the log; polling returns only lines after the one the client has
+    page = c.get(f"/o/{org}/audits/{audit.id}")
+    status = c.get(f"/o/{org}/audits/{audit.id}/status?after={log[-3]['seq']}").get_json()
+    assert [e["seq"] for e in status["log"]] == [e["seq"] for e in log[-2:]]
+    assert page.status_code == 200
+
+
+def test_running_log_shows_on_running_audit(alice, db):
+    c, org = alice["client"], alice["org"]
+    pid = make_project(c, org)
+    upload_new(c, org, pid, zip_bytes(FIXTURES / "cleanapp"))
+    audit = db.session.execute(db.select(Audit)).scalar_one()
+    audit.status = "running"
+    audit.activity = [
+        {"seq": 7, "t": "2026-10-11T10:00:00+00:00", "stage": "inspecting repository", "pct": 5},
+        {"seq": 8, "t": "2026-10-11T10:00:01+00:00", "stage": "inspecting repository", "pct": 6,
+         "msg": "inspected · 1.2 KB", "path": "app/<main>.py", "step": 40, "level": ""},
+    ]
+    db.session.commit()
+    page = c.get(f"/o/{org}/audits/{audit.id}").data
+    assert b"6 earlier lines not kept" in page
+    assert b'class="alog-item alog-inspect" data-seq="8"' in page
+    assert b"app/&lt;main&gt;.py" in page and b"<main>" not in page
+    assert b" 40%" in page and b"alog-now is-inspect" in page

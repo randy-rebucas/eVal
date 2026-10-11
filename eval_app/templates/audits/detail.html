@@ -2,6 +2,42 @@
 {% from "_macros.html" import risk_badge, status_badge, severity_badge, kind_badge, score_bar, sparkline %}
 {% block title %}Audit · {{ audit.repository.name }}{% endblock %}
 {% block content %}
+{# Running log. Stage → kind/icon; app.js mirrors LOG_KINDS for lines that arrive while polling. #}
+{% macro log_kind(stage) -%}
+{%- if stage.startswith('fetching') %}fetch{% elif stage.startswith('inspecting') %}inspect{% elif stage.startswith('detecting') %}lang{% elif stage.startswith('analyzing') %}scan{% elif stage.startswith('validating') %}dedupe{% elif stage == 'scoring' %}score{% elif stage.startswith('AI') %}ai{% elif stage.startswith('saving') %}save{% else %}misc{% endif -%}
+{%- endmacro %}
+{% set log_icons = {'fetch': 'cloud-arrow-down', 'inspect': 'search', 'lang': 'code-slash', 'scan': 'shield-check', 'dedupe': 'funnel', 'score': 'speedometer2', 'ai': 'stars', 'save': 'floppy', 'misc': 'dot'} %}
+{% macro log_entry(e) -%}
+{%- set kind = log_kind(e.stage) -%}
+{%- if e.msg -%}
+<li class="alog-item alog-{{ kind }}{% if e.level %} is-{{ e.level }}{% endif %}" data-seq="{{ e.seq }}"><time datetime="{{ e.t }}">{{ e.t[11:19] }}</time><span class="alog-step">{% if e.step is not none %}{{ '%3d' % e.step }}%{% endif %}</span>{% if e.path %}<i class="bi bi-{{ log_icons[kind] }}" aria-hidden="true"></i><span class="alog-path">{{ e.path }}</span>{% endif %}<span class="alog-msg">{{ e.msg }}</span></li>
+{%- else -%}
+<li class="alog-stage alog-{{ kind }}" data-seq="{{ e.seq }}"><time datetime="{{ e.t }}">{{ e.t[11:19] }}</time><i class="bi bi-{{ log_icons[kind] }}" aria-hidden="true"></i><b>{{ e.stage }}</b><span class="alog-pct">{{ e.pct }}%</span></li>
+{%- endif -%}
+{%- endmacro %}
+{% macro running_log(audit, live) %}
+{% set log = audit.activity or [] %}
+{% set cur = log[-1] if log else none %}
+      <details class="audit-log{% if live %} mt-3{% endif %}" data-audit-log{% if live %} open{% endif %}>
+<summary>Running logs</summary>
+        {% if live %}
+        {% set kind = log_kind(cur.stage if cur else audit.stage) %}
+        <div class="alog-now is-{{ kind }}" data-log-now aria-hidden="true">
+          <i class="bi bi-{{ log_icons[kind] }} alog-now-icon" data-log-now-icon></i>
+          <span class="alog-now-stage" data-log-now-stage>{{ cur.stage if cur else audit.stage }}</span>
+          <span class="alog-now-bar"><span data-log-now-bar data-width="{{ cur.step if cur and cur.step is not none else 0 }}"></span></span>
+          <span class="alog-now-pct" data-log-now-pct>{% if cur and cur.step is not none %}{{ cur.step }}%{% endif %}</span>
+          <span class="alog-now-path" data-log-now-path>{{ cur.path if cur and cur.path }}</span>
+        </div>
+        {% endif %}
+        <ol class="audit-log-entries mb-0 mt-2" data-audit-log-items{% if live %} aria-live="polite" aria-relevant="additions"{% endif %}>
+          {% if log and log[0].seq > 1 %}<li class="alog-gap">… {{ log[0].seq - 1 }} earlier lines not kept</li>{% endif %}
+          {% for e in log %}{{ log_entry(e) }}{% else %}
+          <li class="alog-stage"><time>{{ audit.updated_at|dt }}</time> {{ audit.stage }} · {{ audit.progress }}%</li>
+          {% endfor %}
+        </ol>
+      </details>
+{% endmacro %}
 {% set repo = audit.repository %}
 {% set can_write = g.membership.role != 'viewer' %}
 <div class="page">
@@ -42,18 +78,14 @@
     <div class="term-body">
       <p class="term-line"><span class="term-prompt">$</span> stage: <strong data-stage>{{ audit.stage }}</strong></p>
       <div class="progress my-2" role="progressbar" aria-label="Audit progress"><div class="progress-bar progress-bar-striped progress-bar-animated" data-width="{{ audit.progress }}">{{ audit.progress }}%</div></div>
-      <details class="audit-log mt-3" data-audit-log>
-<summary>Running logs</summary>
-        <ol class="audit-log-entries mb-0 mt-2" data-audit-log-items aria-live="polite" aria-relevant="additions">
-          <li><time>{{ audit.updated_at|dt }}</time> {{ audit.stage }} · {{ audit.progress }}%</li>
-        </ol>
-      </details>
+      {{ running_log(audit, live=true) }}
       <p class="term-line term-cmt mt-2"># The source is inspected statically in an isolated worker; nothing from the repository is executed.</p>
       {% if audit.status == 'queued' %}<p class="term-line term-str mt-1">Waiting for a worker. If this does not start within a few minutes, check that the Celery worker (queue <code>audits</code>) is running.</p>{% endif %}
     </div>
   </section>
 {% elif audit.status == 'failed' %}
   <div class="alert alert-danger mb-0"><strong>Audit failed.</strong> {{ audit.error }}</div>
+  {% if audit.activity %}<section class="term mt-3" aria-label="Running log"><div class="term-body">{{ running_log(audit, live=false) }}</div></section>{% endif %}
 {% elif audit.status == 'cancelled' %}
   <div class="alert alert-secondary mb-0">This audit was cancelled.</div>
 {% else %}

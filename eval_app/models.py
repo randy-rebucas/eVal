@@ -376,6 +376,9 @@ class Audit(TenantMixin, TimestampMixin, db.Model):
     progress: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0)
     error: Mapped[str] = mapped_column(sa.Text, nullable=False, default="")
     celery_task_id: Mapped[str] = mapped_column(sa.String(64), nullable=False, default="")
+    # Running log: the most recent progress events ({"seq", "t", "stage", "pct", "msg", "path", "step", "level"}),
+    # capped by audits.tasks.ACTIVITY_LIMIT. Shown live while the audit runs.
+    activity: Mapped[list] = mapped_column(sa.JSON, nullable=False, default=list, server_default="[]")
 
     overall_score: Mapped[float | None] = mapped_column(sa.Float)
     risk_level: Mapped[str] = mapped_column(sa.String(16), nullable=False, default="")

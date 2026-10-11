@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar
@@ -45,6 +46,7 @@ class AnalyzerContext:
     languages: LanguageReport
     timeout: int = 300
     offline: bool = False  # no network access: analyzers that need it are skipped (see Analyzer.network_required)
+    on_read: Callable[[str], None] | None = field(default=None, repr=False)  # progress: called on every read()
     _cache: dict[str, str | None] = field(default_factory=dict, repr=False)
     _file_set: set[str] = field(init=False, repr=False)
     _ast_cache: dict = field(default_factory=dict, repr=False)
@@ -63,6 +65,8 @@ class AnalyzerContext:
         return self._profile
 
     def read(self, rel: str) -> str | None:
+        if self.on_read is not None:
+            self.on_read(rel)
         if rel not in self._cache:
             self._cache[rel] = read_text(self.root, rel)
         return self._cache[rel]

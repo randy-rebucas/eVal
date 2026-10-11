@@ -171,3 +171,46 @@ def test_read_text_rejects_binary(tmp_path):
     assert ws.read_text(tmp_path, "b.bin") is None
     assert ws.read_text(tmp_path, "t.txt") == "hello"
     assert ws.read_text(tmp_path, "../etc/passwd") is None
+
+
+def test_extract_zip_reports_each_member(tmp_path):
+    z = make_zip(tmp_path / "x.zip", [("repo/a.py", b"print(1)\n"), ("repo/pkg/b.txt", b"x" * 2048)])
+    seen = []
+    extract_zip(z, tmp_path / "out", on_progress=lambda pct, msg, path: seen.append((pct, msg, path)))
+    assert seen == [(50, "extracted · 9 B", "a.py"), (100, "extracted · 2.0 KB", "pkg/b.txt")]
+
+
+def test_iter_files_reports_skipped_entries(tmp_path):
+    (tmp_path / "small.py").write_bytes(b"x = 1\n")
+    (tmp_path / "big.bin").write_bytes(b"0" * 50)
+    entries = []
+    files = list(ws.iter_files(tmp_path, max_file_bytes=10, on_entry=lambda *e: entries.append(e)))
+    assert files == ["small.py"]
+    assert sorted(entries) == [("big.bin", 50, "exceeds the per-file size limit"), ("small.py", 6, "")]
+    assert ws.count_files(tmp_path) == 2
+
+
+def test_git_transfer_progress_is_streamed_in_steps():
+    import subprocess
+    import sys
+
+    script = ("import sys\n"
+              "for i in range(0, 101, 5):\n"
+              "    sys.stderr.write(f'Receiving objects: {i:3d}% ({i}/100)\\r')\n"
+              "sys.stderr.write('Receiving objects: 100% (100/100), done.\\n')\n")
+    p = subprocess.Popen([sys.executable, "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    seen = []
+    err = ws._stream_stderr(p, 30, ws._transfer_reporter(lambda pct, msg, path: seen.append((pct, msg))))
+    assert p.returncode == 0 and b"done." in err
+    assert seen[0] == (10, "receiving objects 0% (0/100)")
+    assert seen[-1] == (60, "receiving objects 100% (100/100)")
+    assert len(seen) == 11  # one line per 10% step, not one per git update
+
+
+def test_checked_out_tree_is_reported_file_by_file():
+    listing = ("100644 blob 1111111111111111111111111111111111111111      12\tapp.py\0"
+               "160000 commit 2222222222222222222222222222222222222222       -\tvendor/sub\0"
+               "100644 blob 3333333333333333333333333333333333333333    4096\tdocs/a b.md\0")
+    seen = []
+    ws._report_tree(listing, lambda pct, msg, path: seen.append((pct, msg, path)))
+    assert seen == [(85, "checked out · 12 B", "app.py"), (100, "checked out · 4.0 KB", "docs/a b.md")]

@@ -11,48 +11,160 @@
     if (!isNaN(n)) { el.style.flexGrow = String(Math.max(n, 0.5)); }
   });
 
+  // Running log: times are rendered in UTC by the server; show them in the viewer's time zone.
+  function localTime(iso) {
+    var d = new Date(iso.indexOf("Z") === -1 && iso.indexOf("+") === -1 ? iso + "Z" : iso);
+    return isNaN(d) ? iso.slice(11, 19) : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  }
+  document.querySelectorAll("[data-audit-log-items] time[datetime]").forEach(function (t) {
+    t.textContent = localTime(t.getAttribute("datetime"));
+  });
+
+  // Mirrors log_kind / log_icons in templates/audits/detail.html.
+  var LOG_KINDS = [["fetching", "fetch", "cloud-arrow-down"], ["inspecting", "inspect", "search"],
+    ["detecting", "lang", "code-slash"], ["analyzing", "scan", "shield-check"], ["validating", "dedupe", "funnel"],
+    ["scoring", "score", "speedometer2"], ["AI", "ai", "stars"], ["saving", "save", "floppy"]];
+  function logKind(stage) {
+    for (var i = 0; i < LOG_KINDS.length; i++) {
+      if (stage.indexOf(LOG_KINDS[i][0]) === 0) { return LOG_KINDS[i]; }
+    }
+    return [null, "misc", "dot"];
+  }
+  var REDUCED_MOTION = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var MAX_LOG_ITEMS = 600;
+
   document.querySelectorAll("[data-progress-url]").forEach(function (el) {
     var url = el.getAttribute("data-progress-url");
     var bar = el.querySelector(".progress-bar");
     var label = el.querySelector("[data-stage]");
     var pct = el.querySelector("[data-progress-pct]");
+    var details = el.querySelector("[data-audit-log]");
     var log = el.querySelector("[data-audit-log-items]");
-    var lastStage = label ? label.textContent : "";
-    var lastProgress = bar ? parseInt(bar.textContent, 10) : -1;
+    var now = el.querySelector("[data-log-now]");
+    var lastSeq = 0;
+    if (log) {
+      log.querySelectorAll("[data-seq]").forEach(function (li) {
+        lastSeq = Math.max(lastSeq, parseInt(li.getAttribute("data-seq"), 10) || 0);
+      });
+      log.scrollTop = log.scrollHeight;
+    }
+    var queue = [];
+    var dripping = false;
+    var finished = null;
 
-    function appendLog(stage, progress) {
-      if (!log) { return; }
-      var item = document.createElement("li");
+    function span(cls, text) {
+      var s = document.createElement("span");
+      s.className = cls;
+      s.textContent = text;
+      return s;
+    }
+    function icon(name) {
+      var i = document.createElement("i");
+      i.className = "bi bi-" + name;
+      i.setAttribute("aria-hidden", "true");
+      return i;
+    }
+
+    function render(e) {
+      var kind = logKind(e.stage);
+      var li = document.createElement("li");
+      li.setAttribute("data-seq", e.seq);
       var time = document.createElement("time");
-      time.textContent = new Date().toLocaleTimeString();
-      item.appendChild(time);
-      item.appendChild(document.createTextNode(" " + stage + " · " + progress + "%"));
-      log.appendChild(item);
-      if (el.querySelector("[data-audit-log]").open) {
-        log.scrollTop = log.scrollHeight;
+      time.setAttribute("datetime", e.t);
+      time.textContent = localTime(e.t);
+      li.appendChild(time);
+      if (e.msg) {
+        li.className = "alog-item alog-" + kind[1] + (e.level ? " is-" + e.level : "") + (REDUCED_MOTION ? "" : " is-new");
+        var step = e.step === null || e.step === undefined ? "" : ("  " + e.step).slice(-3) + "%";
+        li.appendChild(span("alog-step", step));
+        if (e.path) {
+          li.appendChild(icon(kind[2]));
+          li.appendChild(span("alog-path", e.path));
+        }
+        li.appendChild(span("alog-msg", e.msg));
+      } else {
+        li.className = "alog-stage alog-" + kind[1];
+        li.appendChild(icon(kind[2]));
+        var b = document.createElement("b");
+        b.textContent = e.stage;
+        li.appendChild(b);
+        li.appendChild(span("alog-pct", e.pct + "%"));
+      }
+      return li;
+    }
+
+    function showNow(e) {
+      if (!now) { return; }
+      var kind = logKind(e.stage);
+      now.className = "alog-now is-" + kind[1];
+      now.querySelector("[data-log-now-icon]").className = "bi bi-" + kind[2] + " alog-now-icon";
+      now.querySelector("[data-log-now-stage]").textContent = e.stage;
+      var hasStep = e.step !== null && e.step !== undefined;
+      var stageBar = now.querySelector("[data-log-now-bar]");
+      if (hasStep) { stageBar.style.width = e.step + "%"; } else if (!e.msg) { stageBar.style.width = "0%"; }
+      now.classList.toggle("is-busy", !hasStep && !!e.msg);  // analyzers: file count known, total not
+      now.querySelector("[data-log-now-pct]").textContent = hasStep ? e.step + "%" : "";
+      var path = now.querySelector("[data-log-now-path]");
+      if (e.path || !e.msg) {
+        path.textContent = e.path || "";
+        if (!REDUCED_MOTION && e.path) {  // restart the lens animation for each file
+          path.classList.remove("is-new");
+          void path.offsetWidth;
+          path.classList.add("is-new");
+        }
       }
     }
 
+    function append(e) {
+      if (!log) { return; }
+      var stick = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+      if (e.seq > lastSeq + 1 && lastSeq > 0) {
+        var gap = document.createElement("li");
+        gap.className = "alog-gap";
+        gap.textContent = "… " + (e.seq - lastSeq - 1) + " more lines";
+        log.appendChild(gap);
+      }
+      lastSeq = e.seq;
+      log.appendChild(render(e));
+      while (log.children.length > MAX_LOG_ITEMS) { log.removeChild(log.firstChild); }
+      if (stick && details && details.open) { log.scrollTop = log.scrollHeight; }
+      showNow(e);
+    }
+
+    // Reveal queued lines one by one across the polling interval so the log reads file by file.
+    function drip() {
+      if (!queue.length) {
+        dripping = false;
+        if (finished) { window.location.reload(); }
+        return;
+      }
+      dripping = true;
+      append(queue.shift());
+      setTimeout(drip, REDUCED_MOTION ? 0 : Math.max(8, Math.min(140, 1800 / (queue.length + 1))));
+    }
+
     function tick() {
-      fetch(url, { headers: { Accept: "application/json" }, credentials: "same-origin" })
+      fetch(url + "?after=" + lastSeqQueued(), { headers: { Accept: "application/json" }, credentials: "same-origin" })
         .then(function (r) { return r.ok ? r.json() : null; })
         .then(function (data) {
-          if (!data) { return; }
+          if (!data) { setTimeout(tick, 5000); return; }
           if (bar) { bar.style.width = data.progress + "%"; bar.textContent = data.progress + "%"; }
           if (label) { label.textContent = data.stage; }
           if (pct) { pct.textContent = data.progress + "%"; }
-          if (data.stage !== lastStage || data.progress !== lastProgress) {
-            appendLog(data.stage, data.progress);
-            lastStage = data.stage;
-            lastProgress = data.progress;
-          }
+          (data.log || []).forEach(function (e) { queue.push(e); });
           if (["succeeded", "failed", "cancelled"].indexOf(data.status) !== -1) {
-            window.location.reload();
+            finished = data.status;
+            if (!dripping) { drip(); }
+            setTimeout(function () { window.location.reload(); }, 4000);  // don't wait on a long backlog
           } else {
+            if (!dripping) { drip(); }
             setTimeout(tick, 2000);
           }
         })
         .catch(function () { setTimeout(tick, 5000); });
+    }
+    function lastSeqQueued() {
+      return queue.length ? queue[queue.length - 1].seq : lastSeq;
     }
     setTimeout(tick, 1500);
   });

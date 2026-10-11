@@ -119,12 +119,23 @@ def test_lifecycle_classification():
 
 # ----------------------------------------------------------------------------------------------- pipeline
 def test_pipeline_end_to_end_on_fixture():
-    stages = []
-    result = run_pipeline(FIXTURES / "vulnapp",
-                          PipelineConfig(progress=lambda s, p, m: stages.append((s, p))))
+    stages, details = [], []
+
+    def progress(s, p, m="", **detail):
+        stages.append((s, p))
+        if m:
+            details.append((s, m, detail))
+
+    result = run_pipeline(FIXTURES / "vulnapp", PipelineConfig(progress=progress))
     assert result.scorecard.risk == "Critical"
     assert stages[0][0] == "inspecting repository" and any(s.startswith("analyzing") for s, _ in stages)
     assert [p for _, p in stages] == sorted(p for _, p in stages)
+    # the running log names real files, stage by stage
+    inspected = {d["path"] for s, _, d in details if s == "inspecting repository" and d["path"]}
+    assert any(p.endswith(".py") for p in inspected)
+    assert any(s == "detecting languages" and d["path"] for s, _, d in details)
+    assert any(s.startswith("analyzing") and m.startswith("scanned") and d["path"] for s, m, d in details)
+    assert all(d["step"] is None or 0 <= d["step"] <= 100 for _, _, d in details)
     assert all(f.fingerprint and f.evidence is not None for f in result.findings)
     sev_rank = {"critical": 4, "high": 3, "medium": 2, "low": 1, "info": 0}
     ranks = [sev_rank[f.severity] for f in result.findings]
