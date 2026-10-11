@@ -26,7 +26,7 @@ PORTFOLIO_RANK = {"Critical": 0, "High": 1, "Moderate": 2, NOT_ASSESSED: 3, "Low
 CATEGORY_CODES = {
     Category.SECURITY: "SE", Category.ARCHITECTURE: "AR", Category.TESTING: "TE", Category.DATABASE: "DB",
     Category.API: "AP", Category.DEPENDENCIES: "DE", Category.PERFORMANCE: "PE", Category.DEVOPS: "OP",
-    Category.MAINTAINABILITY: "MA",
+    Category.OBSERVABILITY: "OB", Category.MAINTAINABILITY: "MA",
 }
 # Dashboard state filters: the attention notes link to these.
 STATES = ("failed", "running", "stale", "partial", "due")

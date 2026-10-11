@@ -40,6 +40,7 @@ WORKDIR /app
 COPY pyproject.toml README.md ./
 COPY eval_engine ./eval_engine
 COPY eval_app ./eval_app
+COPY eval_sandbox ./eval_sandbox
 RUN pip install ".[ai]" gunicorn
 COPY migrations ./migrations
 COPY wsgi.py ./

@@ -19,7 +19,7 @@ Roles inside an organization are viewer, member, admin and owner.
 
 ## Product Purpose
 
-eVal ("electronic validator") audits applications for production readiness. Its tagline is "AI generates code. eVal verifies it." A user connects a GitHub repository or uploads a ZIP and runs an asynchronous audit. eVal returns evidence-backed findings across nine categories: security, architecture, testing, database, API, dependencies, performance, DevOps and maintainability. It also produces transparent scores, audit history, PR-level gating, GitHub issues and optional AI explanations.
+eVal ("electronic validator") audits applications for production readiness. Its tagline is "AI generates code. eVal verifies it." A user connects a GitHub repository or uploads a ZIP and runs an asynchronous audit. eVal returns evidence-backed findings across ten categories: security, architecture, testing, database, API, dependencies, performance, DevOps, observability and maintainability. It also produces transparent scores, audit history, PR-level gating, GitHub issues and optional AI explanations.
 
 ### Vision
 

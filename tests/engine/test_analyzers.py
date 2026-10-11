@@ -416,9 +416,11 @@ def test_tsc_reports_type_errors_only():
 
 
 def test_registry_has_all_categories_covered():
+    from eval_engine.findings import Category
+
     covered = {str(c) for a in registry.all_analyzers() for c in a.categories}
-    assert covered == {"security", "architecture", "testing", "database", "api", "dependencies", "performance",
-                       "devops", "maintainability"}
+    assert covered == {c.value for c in Category}
+    assert "observability" in covered  # scored on its own since scoring v2, no longer inside devops
 
 
 def test_fixture_tree_is_untouched_by_analysis(tmp_path):

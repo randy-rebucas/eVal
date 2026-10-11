@@ -27,6 +27,7 @@ class Category(StrEnum):
     DEPENDENCIES = "dependencies"
     PERFORMANCE = "performance"
     DEVOPS = "devops"
+    OBSERVABILITY = "observability"
     MAINTAINABILITY = "maintainability"
 
 
@@ -39,6 +40,7 @@ CATEGORY_LABELS = {
     Category.DEPENDENCIES: "Dependencies",
     Category.PERFORMANCE: "Performance",
     Category.DEVOPS: "DevOps & Operations",
+    Category.OBSERVABILITY: "Observability",
     Category.MAINTAINABILITY: "Maintainability",
 }
 

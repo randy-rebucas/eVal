@@ -482,6 +482,18 @@ def test_structured_logging(tmp_path):
     assert "eval:devops.unstructured-logging" not in {f.rule_id for f in run("observability", tmp_path)}
 
 
+def test_observability_is_scored_as_its_own_category(tmp_path):
+    from eval_engine.scoring import score
+
+    write(tmp_path, {"requirements.txt": "flask\n", "app.py": "import logging\n" + FLASK_APP})
+    findings = run("observability", tmp_path)
+    assert findings and {f.category for f in findings} == {"observability"}
+    assert all(f.rule_id.startswith("eval:devops.") for f in findings)  # ids kept: fingerprints and triage carry over
+    card = score(findings, {"devops", "observability"})
+    assert card.categories["devops"].score == 100 and card.categories["devops"].findings == 0
+    assert card.categories["observability"].findings == len(findings) and card.categories["observability"].score < 100
+
+
 def test_audit_log(tmp_path):
     write(tmp_path, {"requirements.txt": "flask\nflask-login\n", "app.py": (
         "from flask_login import login_required\n" + FLASK_APP)})

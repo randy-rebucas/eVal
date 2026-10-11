@@ -16,6 +16,7 @@ is configured in docker-compose for the worker and complements these process-lev
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import signal
@@ -28,6 +29,9 @@ from pathlib import Path
 
 ALLOWED_TOOLS = frozenset({"ruff", "bandit", "mypy", "semgrep", "trivy", "eslint", "tsc", "pip-audit"})
 DEFAULT_MAX_OUTPUT = 32 * 1024 * 1024
+# Tools installed next to an eVal source checkout (README: `npm install --prefix .tools ...`; trivy in .tools/bin).
+# Resolved from this file, never from the working directory or the audited repository.
+CHECKOUT_TOOL_DIRS = tuple(Path(__file__).resolve().parents[1] / ".tools" / d for d in ("bin", "node_modules/.bin"))
 
 
 class SandboxError(Exception):
@@ -45,7 +49,8 @@ class ToolResult:
 
 
 def which(tool: str) -> str | None:
-    """Locate an allow-listed tool on PATH or next to the running interpreter (virtualenv bin/Scripts)."""
+    """Locate an allow-listed tool on EVAL_TOOL_PATH, PATH, next to the running interpreter (virtualenv
+    bin/Scripts), or in the eVal checkout's ``.tools`` directory."""
     if tool not in ALLOWED_TOOLS:
         return None
     # On Windows, try real executables first: node_modules/.bin also holds extensionless POSIX shell shims,
@@ -62,6 +67,11 @@ def which(tool: str) -> str | None:
     for candidate in (bindir / tool, bindir / f"{tool}.exe", bindir / f"{tool}.cmd"):
         if candidate.is_file():
             return str(candidate)
+    for tooldir in CHECKOUT_TOOL_DIRS:
+        if tooldir.is_dir():
+            found = next((f for f in (shutil.which(n, path=str(tooldir)) for n in names) if f), None)
+            if found:
+                return found
     return None
 
 
@@ -155,13 +165,19 @@ def run(
             except subprocess.TimeoutExpired:
                 timed_out = True
                 _kill_tree(proc)
-                proc.wait(timeout=10)
+                try:
+                    # A tool killed mid-write (e.g. Trivy downloading its database) can take a while to exit.
+                    proc.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    with contextlib.suppress(subprocess.TimeoutExpired):  # reported as timed out either way
+                        proc.wait(timeout=10)
             stdout, t1 = _read_capped(out, max_output)
             stderr, t2 = _read_capped(err, 256 * 1024)
     finally:
         shutil.rmtree(home, ignore_errors=True)
     return ToolResult(
-        returncode=proc.returncode,
+        returncode=proc.returncode if proc.returncode is not None else -1,
         stdout=stdout,
         stderr=stderr,
         timed_out=timed_out,

@@ -31,16 +31,41 @@ def test_analyzers_that_open_connections_declare_it():
             assert analyzer.network_use, f"{analyzer.name} can open connections but declares no network_use"
 
 
-def test_internet_analyzers_are_skipped_offline_unless_configured(monkeypatch):
+def test_internet_analyzers_are_skipped_offline_unless_configured(monkeypatch, tmp_path):
     from eval_engine.analyzers.base import AnalyzerContext
     from eval_engine.languages import LanguageReport
 
     monkeypatch.delenv("EVAL_SEMGREP_CONFIG", raising=False)
     monkeypatch.delenv("EVAL_TRIVY_CACHE_DIR", raising=False)
+    # Trivy's default per-user cache: empty here, whatever this machine has already downloaded.
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     ctx = AnalyzerContext(root=ROOT, files=[], languages=LanguageReport(), offline=True)
     for analyzer in registry.all_analyzers():
         needs = analyzer.network_required(ctx)
         assert bool(needs) == bool(analyzer.network_use), analyzer.name
+
+
+def test_trivy_uses_a_persistent_default_cache(monkeypatch, tmp_path):
+    """The sandbox gives each tool run a throwaway HOME, so without a default cache Trivy would re-download its
+    database (over 1 GB) on every audit."""
+    from eval_engine.analyzers import trivy
+    from eval_engine.analyzers.base import AnalyzerContext
+    from eval_engine.languages import LanguageReport
+
+    monkeypatch.delenv("EVAL_TRIVY_CACHE_DIR", raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    cache = tmp_path / "eval" / "trivy"
+    assert trivy.cache_dir() == str(cache) and cache.is_dir()
+    ctx = AnalyzerContext(root=ROOT, files=[], languages=LanguageReport(), offline=True)
+    analyzer = registry.get(["trivy"])[0]
+    assert analyzer.network_required(ctx)  # empty cache: needs the network
+    (cache / "db").mkdir()
+    (cache / "db" / "trivy.db").write_bytes(b"")
+    assert analyzer.network_required(ctx) is None  # pre-seeded: works offline
+    monkeypatch.setenv("EVAL_TRIVY_CACHE_DIR", str(tmp_path / "configured"))
+    assert trivy.cache_dir() == str(tmp_path / "configured")  # the operator's setting wins
 
 
 def test_network_doc_lists_every_internet_analyzer():

@@ -48,6 +48,9 @@
       });
       log.scrollTop = log.scrollHeight;
     }
+    var waiting = el.querySelector("[data-waiting]");
+    var lastStage = label ? label.textContent : "";
+    var lastProgress = bar ? parseInt(bar.getAttribute("data-width"), 10) : -1;
     var queue = [];
     var dripping = false;
     var finished = null;
@@ -68,7 +71,7 @@
     function render(e) {
       var kind = logKind(e.stage);
       var li = document.createElement("li");
-      li.setAttribute("data-seq", e.seq);
+      if (e.seq) { li.setAttribute("data-seq", e.seq); }
       var time = document.createElement("time");
       time.setAttribute("datetime", e.t);
       time.textContent = localTime(e.t);
@@ -118,13 +121,15 @@
     function append(e) {
       if (!log) { return; }
       var stick = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
-      if (e.seq > lastSeq + 1 && lastSeq > 0) {
-        var gap = document.createElement("li");
-        gap.className = "alog-gap";
-        gap.textContent = "… " + (e.seq - lastSeq - 1) + " more lines";
-        log.appendChild(gap);
+      if (e.seq) {
+        if (e.seq > lastSeq + 1 && lastSeq > 0) {
+          var gap = document.createElement("li");
+          gap.className = "alog-gap";
+          gap.textContent = "… " + (e.seq - lastSeq - 1) + " more lines";
+          log.appendChild(gap);
+        }
+        lastSeq = e.seq;
       }
-      lastSeq = e.seq;
       log.appendChild(render(e));
       while (log.children.length > MAX_LOG_ITEMS) { log.removeChild(log.firstChild); }
       if (stick && details && details.open) { log.scrollTop = log.scrollHeight; }
@@ -151,7 +156,16 @@
           if (bar) { bar.style.width = data.progress + "%"; bar.textContent = data.progress + "%"; }
           if (label) { label.textContent = data.stage; }
           if (pct) { pct.textContent = data.progress + "%"; }
-          (data.log || []).forEach(function (e) { queue.push(e); });
+          var events = data.log || [];
+          events.forEach(function (e) { queue.push(e); });
+          // A worker that records no running log (older deployment) still moves stage/progress: log those so the
+          // panel never looks frozen while the bar advances. Synthetic lines carry no seq.
+          if (!events.length && (data.stage !== lastStage || data.progress !== lastProgress)) {
+            queue.push({ seq: null, t: new Date().toISOString(), stage: data.stage, pct: data.progress });
+          }
+          lastStage = data.stage;
+          lastProgress = data.progress;
+          if (data.status !== "queued" && waiting) { waiting.hidden = true; }
           if (["succeeded", "failed", "cancelled"].indexOf(data.status) !== -1) {
             finished = data.status;
             if (!dripping) { drip(); }
@@ -164,7 +178,10 @@
         .catch(function () { setTimeout(tick, 5000); });
     }
     function lastSeqQueued() {
-      return queue.length ? queue[queue.length - 1].seq : lastSeq;
+      for (var i = queue.length - 1; i >= 0; i--) {
+        if (queue[i].seq) { return queue[i].seq; }
+      }
+      return lastSeq;
     }
     setTimeout(tick, 1500);
   });

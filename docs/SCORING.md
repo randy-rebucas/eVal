@@ -3,8 +3,14 @@
 > Scores are **risk indicators** derived from automated static analysis. They are not a guarantee of security or
 > production readiness, and a high score does not mean the absence of vulnerabilities.
 
-Implementation: `eval_engine/scoring.py` (`SCORING_VERSION = "1"`). This document and the code must change
+Implementation: `eval_engine/scoring.py` (`SCORING_VERSION = "2"`). This document and the code must change
 together. Scoring is deterministic: the same findings always produce the same scores, regardless of order.
+
+**Version history.** v2 scores observability (logging, error tracking, tracing, metrics, request ids, health
+endpoints, audit logs, job monitoring) as its own category with weight 1.0; in v1 those findings counted toward
+DevOps. Rule ids are unchanged (`eval:devops.no-logging`, …), so fingerprints and triage carry over. Audits are
+not rescored: an audit made under v1 keeps its stored nine categories and shows Observability as not assessed
+until the repository is audited again, so compare DevOps and overall scores across the change with care.
 
 ## 1. Which findings count
 
@@ -39,8 +45,8 @@ penalty = severity_weight × confidence_factor × kind_factor
 
 ## 3. Category score
 
-For each of the nine categories (security, architecture, testing, database, API, dependencies, performance,
-DevOps, maintainability):
+For each of the ten categories (security, architecture, testing, database, API, dependencies, performance,
+DevOps, observability, maintainability):
 
 1. **Coverage.** A category is *assessed* only if at least one analyzer covering it finished with status `ok`.
    Otherwise it is reported as **Not assessed** with no score — never as 100. Skipped analyzers (tool not
@@ -77,7 +83,7 @@ Low-confidence findings never set a ceiling. The reason for an applied ceiling i
 | Security | 3.0 |
 | Dependencies, API | 2.0 |
 | Database, Testing, DevOps | 1.5 |
-| Architecture, Performance, Maintainability | 1.0 |
+| Architecture, Performance, Observability, Maintainability | 1.0 |
 
 An average must not hide a severe problem, so the overall risk is escalated:
 

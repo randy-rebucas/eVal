@@ -1,7 +1,9 @@
 """Trivy filesystem scan: known-vulnerable dependencies, IaC misconfigurations, and secrets.
 
 Trivy downloads its vulnerability database on first use; set ``EVAL_TRIVY_CACHE_DIR`` to a persistent,
-writable directory so the worker does not re-download it per audit (or pre-seed it for offline use).
+writable directory so the worker does not re-download it per audit (or pre-seed it for offline use). Without it,
+a per-user cache is used (``%LOCALAPPDATA%\\eval\\trivy`` on Windows, ``~/.cache/eval/trivy`` elsewhere): the
+sandbox gives every tool run a fresh temporary HOME, so Trivy's own default cache would be thrown away each time.
 """
 
 from __future__ import annotations
@@ -19,6 +21,21 @@ SEV = {"CRITICAL": Severity.CRITICAL, "HIGH": Severity.HIGH, "MEDIUM": Severity.
        "UNKNOWN": Severity.LOW}
 
 
+def cache_dir() -> str | None:
+    """EVAL_TRIVY_CACHE_DIR, else a persistent per-user cache; None when neither can be used."""
+    configured = os.environ.get("EVAL_TRIVY_CACHE_DIR")
+    if configured:
+        return configured
+    base = os.environ.get("LOCALAPPDATA") if os.name == "nt" else os.environ.get("XDG_CACHE_HOME")
+    path = Path(base) if base else Path.home() / ".cache"
+    path = path / "eval" / "trivy"
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError:  # read-only home (e.g. a locked-down container without EVAL_TRIVY_CACHE_DIR)
+        return None
+    return str(path)
+
+
 def vuln_title(pkg: str, version: str, vuln_id: str) -> str:
     """Shared with the OSV analyzer so the same vulnerability from both tools deduplicates."""
     return f"{pkg} {version}: {vuln_id}"
@@ -31,14 +48,15 @@ class TrivyAnalyzer(Analyzer):
     categories = (Category.DEPENDENCIES, Category.DEVOPS)
     tool = "trivy"
     network_use = ("mirror.gcr.io / ghcr.io: downloads the vulnerability, Java and checks databases; nothing is "
-                   "uploaded. None under --offline with a pre-seeded EVAL_TRIVY_CACHE_DIR")
+                   "uploaded. None under --offline with a pre-seeded cache (EVAL_TRIVY_CACHE_DIR or the per-user "
+                   "default)")
     address_space_limit = None  # Trivy mmaps its vulnerability DB; RLIMIT_AS makes that fail
 
     def network_required(self, ctx: AnalyzerContext):
-        cache = os.environ.get("EVAL_TRIVY_CACHE_DIR")
+        cache = cache_dir()
         if cache and (Path(cache) / "db" / "trivy.db").is_file():
             return None
-        return ("downloads its vulnerability database; pre-seed EVAL_TRIVY_CACHE_DIR "
+        return (f"downloads its vulnerability database; pre-seed {cache or 'EVAL_TRIVY_CACHE_DIR'} "
                 "(trivy image --download-db-only --cache-dir DIR)")
 
     def run(self, ctx: AnalyzerContext):
@@ -55,7 +73,7 @@ class TrivyAnalyzer(Analyzer):
                     "--skip-dirs", "node_modules", "--skip-dirs", "**/node_modules",
                     "--skip-dirs", ".venv", "--skip-dirs", "**/.venv",
                     "--timeout", f"{max(ctx.timeout - 10, 30)}s"]
-            cache = os.environ.get("EVAL_TRIVY_CACHE_DIR")
+            cache = cache_dir()
             if cache:
                 args += ["--cache-dir", cache]
             if ctx.offline:  # use the pre-seeded DB and embedded checks; no update or registry lookups

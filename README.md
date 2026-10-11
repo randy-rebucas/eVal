@@ -4,7 +4,7 @@
 
 eVal is a multi-tenant SaaS that audits applications for production readiness. Connect a GitHub repository or
 upload a ZIP, run an asynchronous audit, and get evidence-backed findings across security, architecture,
-testing, databases, APIs, dependencies, performance, DevOps and maintainability — with transparent scores,
+testing, databases, APIs, dependencies, performance, DevOps, observability and maintainability — with transparent scores,
 audit history, PR-level gating, GitHub issues and optional AI-assisted explanations.
 
 AI can generate software; eVal verifies that the software is actually engineered correctly. Beyond classic
@@ -30,12 +30,16 @@ indicators, and categories it could not assess are shown as *not assessed*.
 | [docs/ROADMAP.md](docs/ROADMAP.md) | what is done, what is not |
 | [docs/LOCAL_AI.md](docs/LOCAL_AI.md) | eVal Local: on-device AI auditing plan |
 | [docs/NETWORK.md](docs/NETWORK.md) | what runs locally, what needs the internet, and what is sent |
+| [docs/SANDBOX.md](docs/SANDBOX.md) | opt-in sandbox terminals for trying a fix (self-hosted, gVisor) |
 
 ## Features
 
 - Users, organizations, roles (viewer/member/admin/owner), projects, tenant isolation on every query
 - GitHub repositories (public, or private via encrypted tokens) with branch/commit selection; ZIP uploads
-- Asynchronous audits on Celery + Redis with live progress and cancellation
+- Asynchronous audits on Celery + Redis with cancellation and a **live running log**: each stage with its own
+  progress, and the actual files as they are fetched (archive members, or git transfer progress and the
+  checked-out tree), inspected, classified by language and read by each analyzer, followed by each analyzer's
+  result
 - 23 analyzers: Ruff, Bandit, mypy, ESLint, TypeScript, Semgrep, Trivy, OSV.dev, PyPI/npm registry checks, and
   built-in checks for secrets, **API security and design** (authentication, object-level authorization/IDOR,
   request-body validation, error disclosure and handling, error responses sent with HTTP 200, inconsistent error
@@ -106,7 +110,12 @@ Open http://127.0.0.1:8000. Compose runs `postgres`, `redis`, a one-shot `migrat
 hardened `worker` (read-only rootfs, dropped capabilities, resource limits). The image includes Ruff, Bandit,
 mypy, Semgrep, ESLint, TypeScript and Trivy (toggle with build args `INSTALL_SEMGREP`, `INSTALL_NODE_TOOLS`,
 `INSTALL_TRIVY`). Semgrep (`p/default` rules), Trivy (vulnerability DB) and OSV.dev need outbound network
-access; see Configuration for offline options.
+access; see Configuration for offline options. The optional sandbox-terminal service is not started unless you
+add `--profile sandbox` (see [docs/SANDBOX.md](docs/SANDBOX.md)).
+
+The application code is baked into the image, so after pulling or changing code rebuild before restarting:
+`docker compose up -d --build` (or `--build worker` when only the worker is containerized). A worker left on an
+old image keeps running audits with the old engine.
 
 ## Local development
 
@@ -124,13 +133,27 @@ celery -A eval_app.celery_worker:celery worker -Q audits --loglevel=INFO   # add
 
 `.env` is loaded automatically by `flask`, `wsgi.py` and the worker (real environment variables win).
 Set `CELERY_TASK_ALWAYS_EAGER=true` to run audits inline without a worker (development only).
-Optional JS/TS tools without a global install: `npm install --prefix .tools eslint@9 typescript@5` and set
-`EVAL_TOOL_PATH=<repo>/.tools/node_modules/.bin`.
+Ruff, Bandit and mypy come with `pip install`. The other external analyzers are optional; `eval-audit doctor`
+lists what is missing. Install them into the checkout (both git-ignored `.tools` folders are found automatically,
+no `EVAL_TOOL_PATH` needed):
+
+```bash
+pip install "semgrep>=1.90"                       # into the venv; works on Windows too
+npm install --prefix .tools eslint@9 typescript@5 # -> .tools/node_modules/.bin
+# Trivy: download the release for your OS from github.com/aquasecurity/trivy/releases, check it against
+# trivy_<version>_checksums.txt, and put the binary in .tools/bin (or anywhere on PATH)
+```
+
+Trivy downloads its vulnerability database (over 1 GB) on first use and keeps it in `EVAL_TRIVY_CACHE_DIR`, or
+by default in `%LOCALAPPDATA%\eval\trivy` (Windows) / `~/.cache/eval/trivy`. Pre-seed it once so the first audit
+does not hit the analyzer timeout: `trivy image --download-db-only --cache-dir <that folder>`. Semgrep skips
+`test/` and `tests/` folders by default, so auditing the fixtures in place shows no Semgrep findings; copy one
+elsewhere to try it.
 
 ## Testing and linting
 
 ```bash
-pytest                                  # SQLite in-memory; ~430 tests, ~90 s
+pytest                                  # SQLite in-memory; ~690 tests, ~4 min
 TEST_DATABASE_URL=postgresql+psycopg://eval:...@127.0.0.1:55450/eval_test pytest   # against PostgreSQL
 ruff check .
 bandit -r eval_app eval_engine scripts -c pyproject.toml
@@ -146,7 +169,8 @@ issues live in `tests/fixtures/` (excluded from linting and test collection).
 1. Create a project, then **Add repository**: connect `owner/repo` (add a GitHub token under *Integrations* for
    private repos and issue creation) or upload a ZIP.
 2. Pick a branch or commit and **Run audit**, or **Audit PR** by number.
-3. Review the dashboard: overall and category scores, coverage, findings with evidence; filter, triage,
+3. Follow the running log while it audits, then review the dashboard: overall score, category scores (weakest
+   first), coverage, findings with evidence; filter, triage,
    compare with earlier audits, export, or create GitHub issues.
 4. Optional: enable AI under *Integrations → AI-assisted analysis* with an Anthropic/OpenAI key.
 5. CI: create an API token and use `scripts/eval_ci.py` (see docs/CI.md).
@@ -288,6 +312,8 @@ Full guide: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). In short:
 ```
 eval_engine/   analysis engine (no Flask): workspace, sandbox, analyzers, scoring, reports, AI, CLI
 eval_app/      Flask SaaS: auth, orgs, projects, audits (Celery), findings, integrations, API, templates
+eval_sandbox/  optional sandbox-terminal service (Docker API + gVisor), separate from the app
+sandbox/       sandbox workspace image (Dockerfile, init script)
 migrations/    Alembic migrations
 scripts/       eval_ci.py (CI gate)
 ide/vscode/    VS Code extension (TypeScript): findings as diagnostics, audits, triage via /api/v1

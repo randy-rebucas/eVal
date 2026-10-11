@@ -10,7 +10,8 @@ from dataclasses import dataclass, field
 
 from .findings import Category, Confidence, Finding, FindingKind, Severity
 
-SCORING_VERSION = "1"
+# 2: observability findings are scored in their own category instead of DevOps.
+SCORING_VERSION = "2"
 
 SEVERITY_WEIGHT = {
     Severity.CRITICAL: 40.0,
@@ -47,6 +48,7 @@ CATEGORY_WEIGHT = {
     Category.DATABASE: 1.5,
     Category.TESTING: 1.5,
     Category.DEVOPS: 1.5,
+    Category.OBSERVABILITY: 1.0,
     Category.ARCHITECTURE: 1.0,
     Category.PERFORMANCE: 1.0,
     Category.MAINTAINABILITY: 1.0,

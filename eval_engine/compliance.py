@@ -167,6 +167,7 @@ CATEGORY_FALLBACK = {
     "database": _M(soc2=["CC6.1"], iso27001=["A.8.28"]),
     "dependencies": _M(owasp=["A06:2021"], soc2=["CC7.1"], iso27001=["A.8.8", "A.5.21"]),
     "devops": _M(soc2=["CC8.1"], iso27001=["A.8.9", "A.8.32"]),
+    "observability": _M(soc2=["CC7.2"], iso27001=["A.8.15", "A.8.16"]),
     "testing": _M(soc2=["CC8.1"], iso27001=["A.8.29"]),
     "architecture": _M(soc2=["CC8.1"], iso27001=["A.8.27"]),
     "maintainability": _M(soc2=["CC8.1"], iso27001=["A.8.25"]),

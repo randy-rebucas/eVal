@@ -4,8 +4,9 @@ Checks for structured logging, error tracking, distributed tracing, request/corr
 metrics, audit logs for security-relevant actions, and monitoring of background jobs. Every finding carries a
 practical recommendation.
 
-Rule ids keep the ``devops.`` namespace these checks had before they moved out of the DevOps analyzer, so existing
-findings keep their fingerprints and triage decisions.
+Findings are scored in their own Observability category (scoring version 2; before that they counted toward
+DevOps). Rule ids keep the ``devops.`` namespace these checks had before they moved out of the DevOps analyzer, so
+existing findings keep their fingerprints and triage decisions.
 """
 
 from __future__ import annotations
@@ -67,7 +68,7 @@ JS_CONSOLE = re.compile(r"\bconsole\.(log|error|warn|info)\(")
 class ObservabilityAnalyzer(Analyzer):
     name = "observability"
     title = "Observability (logging, errors, tracing, metrics, audit, jobs)"
-    categories = (Category.DEVOPS,)
+    categories = (Category.OBSERVABILITY,)
 
     def run(self, ctx: AnalyzerContext):
         code_files = [f for f in ctx.files if f.endswith(CODE_SUFFIXES) and not is_test_path(f)
@@ -89,7 +90,7 @@ class ObservabilityAnalyzer(Analyzer):
         return out
 
     def _f(self, ctx, rule, title, sev, conf, kind, desc, fix, file_path="", line=None, evidence=None):
-        return self.finding(ctx, rule=rule, title=title, category=Category.DEVOPS, severity=sev, confidence=conf,
+        return self.finding(ctx, rule=rule, title=title, category=Category.OBSERVABILITY, severity=sev, confidence=conf,
                             kind=kind, description=desc, remediation=fix, file_path=file_path, line=line,
                             evidence=evidence)
 

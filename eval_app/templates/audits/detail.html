@@ -80,7 +80,7 @@
       <div class="progress my-2" role="progressbar" aria-label="Audit progress"><div class="progress-bar progress-bar-striped progress-bar-animated" data-width="{{ audit.progress }}">{{ audit.progress }}%</div></div>
       {{ running_log(audit, live=true) }}
       <p class="term-line term-cmt mt-2"># The source is inspected statically in an isolated worker; nothing from the repository is executed.</p>
-      {% if audit.status == 'queued' %}<p class="term-line term-str mt-1">Waiting for a worker. If this does not start within a few minutes, check that the Celery worker (queue <code>audits</code>) is running.</p>{% endif %}
+      {% if audit.status == 'queued' %}<p class="term-line term-str mt-1" data-waiting>Waiting for a worker. If this does not start within a few minutes, check that the Celery worker (queue <code>audits</code>) is running.</p>{% endif %}
     </div>
   </section>
 {% elif audit.status == 'failed' %}
@@ -168,23 +168,48 @@
   </section>
   {% endif %}
 
-  <section aria-labelledby="cat-h">
-    <header class="lp-sec-h mt-1 mb-2"><h2 id="cat-h">Category scores</h2></header>
+  {# Weakest first; categories no analyzer could assess (no score) go last. #}
+  {% set all_cats = sc.get('categories', {}).items()|list %}
+  {% set scored = all_cats|selectattr('1.assessed')|rejectattr('1.score', 'none')|sort(attribute='1.score')|list %}
+  {% set cats = scored + all_cats|reject('in', scored)|list %}
+  {# Two explicit columns read top to bottom (weakest in the left one); the spare cell of an odd count holds the
+     risk summary instead of being left empty. #}
+  {% set half = (cats|length + 1) // 2 %}
+  <section class="pane" aria-labelledby="cat-h">
+    <div class="pane-bar"><h2 id="cat-h"><span>Category scores</span></h2><span class="pane-note">weakest first</span></div>
     <div class="cat-grid">
-      {% for name, cs in sc.get('categories', {}).items() %}
-      <div class="cat{{ '' if cs.assessed else ' is-na' }}">
-        <div class="cat-h"><span>{{ category_labels.get(name, name) }}</span>
-          {% if cs.assessed %}{{ risk_badge(cs.risk) }}{% else %}<span class="badge na">not assessed</span>{% endif %}</div>
+    {% for col in [cats[:half], cats[half:]] %}
+    <ol class="cat-col"{% if loop.index == 2 %} start="{{ half + 1 }}"{% endif %}>
+      {% for name, cs in col %}
+      <li class="cat{{ '' if cs.assessed else ' is-na' }}">
+        <div class="cat-name">
+          <span class="cat-label">{{ category_labels.get(name, name) }}</span>
+          {% if cs.assessed %}
+            {% if cs.ceiling_reason %}<span class="cat-why" title="{{ cs.ceiling_reason }}">{{ cs.ceiling_reason }}</span>{% endif %}
+            {% if name == 'performance' %}<span class="cat-why" title="Findings are read from the code. No benchmarks, load tests or profiling were run.">Static risk only · measured performance not assessed</span>{% endif %}
+          {% else %}
+            <span class="cat-why">No analyzer covering this category ran successfully.</span>
+          {% endif %}
+        </div>
         {% if cs.assessed %}
-          <div class="cat-n"><b>{{ cs.score|score }}</b><a href="?category={{ name }}#findings">{{ cs.findings }} finding{{ '' if cs.findings == 1 else 's' }}</a></div>
-          {{ score_bar(cs.score) }}
-          {% if cs.ceiling_reason %}<div class="cat-why" title="{{ cs.ceiling_reason }}">{{ cs.ceiling_reason }}</div>{% endif %}
-          {% if name == 'performance' %}<div class="cat-why" title="Findings are read from the code. No benchmarks, load tests or profiling were run.">Static risk only · measured performance not assessed</div>{% endif %}
+          <div class="cat-bar">{{ score_bar(cs.score) }}</div>
+          <b class="cat-score">{{ cs.score|score }}</b>
+          <span class="cat-risk">{{ risk_badge(cs.risk) }}</span>
+          <a class="cat-count" href="?category={{ name }}#findings">{{ cs.findings }} finding{{ '' if cs.findings == 1 else 's' }}</a>
         {% else %}
-          <div class="cat-why">No analyzer covering this category ran successfully.</div>
+          <div class="cat-bar"></div><b class="cat-score">—</b>
+          <span class="cat-risk"><span class="badge na">not assessed</span></span><span class="cat-count"></span>
         {% endif %}
-      </div>
+      </li>
       {% endfor %}
+      {% if loop.last and col|length < half %}
+      <li class="cat-sum" aria-label="Categories by risk">
+        {% for risk in ['Critical', 'High', 'Moderate', 'Low'] %}{% set n = cats|selectattr('1.assessed')|selectattr('1.risk', 'equalto', risk)|list|length %}{% if n %}<span>{{ risk_badge(risk) }} <b>{{ n }}</b></span>{% endif %}{% endfor %}
+        {% set na = cats|rejectattr('1.assessed')|list|length %}{% if na %}<span><span class="badge na">not assessed</span> <b>{{ na }}</b></span>{% endif %}
+      </li>
+      {% endif %}
+    </ol>
+    {% endfor %}
     </div>
   </section>
 
