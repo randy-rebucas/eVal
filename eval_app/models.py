@@ -285,7 +285,12 @@ class NotificationChannel(TenantMixin, TimestampMixin, db.Model):
 
 class Repository(TenantMixin, TimestampMixin, db.Model):
     __tablename__ = "repositories"
-    __table_args__ = (sa.CheckConstraint("source IN ('github','upload')", name="source_valid"),)
+    __table_args__ = (
+        sa.CheckConstraint("source IN ('github','upload')", name="source_valid"),
+        # A GitHub repository is connected to a project at most once. Partial: uploads all have full_name "".
+        sa.Index("uq_repositories_project_github_full_name", "project_id", "full_name", unique=True,
+                 postgresql_where=sa.text("source = 'github'"), sqlite_where=sa.text("source = 'github'")),
+    )
 
     organization_id: Mapped[uuid.UUID] = org_fk()
     project_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("projects.id", ondelete="CASCADE"), index=True)

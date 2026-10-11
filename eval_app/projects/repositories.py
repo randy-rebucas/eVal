@@ -8,6 +8,7 @@ import zipfile
 from pathlib import Path
 
 from flask import current_app
+from sqlalchemy.exc import IntegrityError
 from werkzeug.datastructures import FileStorage
 
 from ..extensions import db
@@ -70,7 +71,11 @@ def add_github_repository(org: Organization, project: Project, full_name: str, c
         credential_id=cred.id if cred else None,
     )
     db.session.add(repo)
-    db.session.flush()
+    try:
+        db.session.flush()
+    except IntegrityError as exc:  # connected by a concurrent request after the check above
+        db.session.rollback()
+        raise RepositoryError("That repository is already connected to this project.") from exc
     events.record("repository.connected", organization_id=org.id, target=repo, full_name=info.full_name)
     db.session.commit()
     return repo
