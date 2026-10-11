@@ -34,7 +34,7 @@ JS_SQL_TEMPLATE = re.compile(
     r"""\.(?:query|execute|raw|\$queryRawUnsafe|\$executeRawUnsafe|unsafe)\s*\(\s*`[^`]*\b(select|insert|update|"""
     r"""delete)\b[^`]*\$\{""", re.I)
 JS_SQL_CONCAT = re.compile(
-    r"""\.(?:query|execute|raw)\s*\(\s*["'][^"']*\b(select|insert|update|delete)\b[^"']*["']\s*\+""", re.I)
+    r"""\.(?:query|execute|raw)\s*\(\s*["'][^"'\n]*\b(select|insert|update|delete)\b[^"'\n]*["']\s*\+""", re.I)
 MODEL_BASE = re.compile(r"(db\.)?Model|Base|\w*Base")
 MONEY_TOKENS = {"price", "prices", "amount", "cost", "costs", "total", "subtotal", "balance", "fee", "fees", "salary",
                 "wage", "payment", "revenue", "tax", "discount", "charge", "refund", "budget", "money", "usd", "eur"}
@@ -114,9 +114,12 @@ class DatabaseAnalyzer(Analyzer):
                     findings.append(self._sqli(ctx, rel, node.lineno, how, is_test_path(rel)))
 
         for rel in ctx.files_with_suffix(".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx"):
-            for i, line in enumerate(ctx.lines(rel), start=1):
-                if JS_SQL_TEMPLATE.search(line) or JS_SQL_CONCAT.search(line):
-                    findings.append(self._sqli(ctx, rel, i, "template literal / concatenation", is_test_path(rel)))
+            text = ctx.read(rel) or ""
+            # Whole-file search: SQL in template literals usually spans several lines.
+            lines = sorted({text.count("\n", 0, m.start()) + 1
+                            for pattern in (JS_SQL_TEMPLATE, JS_SQL_CONCAT) for m in pattern.finditer(text)})
+            for i in lines:
+                findings.append(self._sqli(ctx, rel, i, "template literal / concatenation", is_test_path(rel)))
 
         for rel in ctx.files_with_suffix(".prisma"):
             findings.extend(self._prisma_design(ctx, rel))

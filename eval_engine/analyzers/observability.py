@@ -16,7 +16,11 @@ from ..findings import Category, Confidence, FindingKind, Severity
 from .base import Analyzer, AnalyzerContext, is_test_path
 from .registry import register
 
-HEALTH_ROUTE = re.compile(r"""["'`]/(?:health|healthz|livez|readyz|ready|status|ping)["'`/]""", re.I)
+# A route whose last segment is a health word: "/health", "/api/v1/healthz", "/healthcheck/", and Django's
+# `path("healthz/", ...)` (no leading slash). A bare string such as 'status' is a dict key, not a route.
+HEALTH_WORD = r"_?(?:health(?:z|check|-check|_check)?|livez|readyz|ready|readiness|liveness|alive|status|ping)"
+HEALTH_ROUTE = re.compile(rf"""["'`][^"'`\s]*/{HEALTH_WORD}/?["'`]|"""
+                          rf"""\b(?:re_)?path\(\s*r?["']\^?{HEALTH_WORD}/?\$?["']""", re.I)
 WEB_FRAMEWORKS = {"flask", "django", "fastapi", "express", "nestjs", "fastify", "koa", "starlette"}
 CODE_SUFFIXES = (".py", ".js", ".ts", ".mjs", ".cjs")
 MANIFESTS = ("requirements.txt", "pyproject.toml", "Pipfile", "setup.cfg", "setup.py", "package.json")

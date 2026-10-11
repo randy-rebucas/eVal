@@ -205,17 +205,22 @@ def build_import_graph(ctx: AnalyzerContext) -> dict[str, set[str]]:
                 targets = [a.name for a in node.names]
             elif isinstance(node, ast.ImportFrom):
                 base = _resolve_relative(rel, node.module, node.level) if node.level else (node.module or "")
-                # `from pkg import mod` imports the submodule when one exists; otherwise a name from pkg.
-                targets = [f"{base}.{a.name}" for a in node.names] + [base]
+                # `from pkg import mod` imports the submodule when one exists; otherwise a name from pkg, which is
+                # an edge to pkg itself. (Counting pkg/__init__.py for submodule imports too would turn every
+                # package that re-exports its modules into a cycle with any module importing a sibling.)
+                names_from_base = False
+                for a in node.names:
+                    sub = _resolve(modmap, f"{base}.{a.name}", rel) if a.name != "*" else None
+                    if sub is None:
+                        names_from_base = True
+                    else:
+                        targets.append(f"{base}.{a.name}")
+                if names_from_base:
+                    targets.append(base)
             for t in targets:
                 dest = _resolve(modmap, t, rel)
                 if dest and dest != rel:
                     graph[rel].add(dest)
-                    if isinstance(node, ast.Import):
-                        continue
-                    if t != base:
-                        continue  # each imported submodule is its own edge
-                    break
     js_files = [f for f in ctx.files_with_suffix(*JS_EXTS) if not is_test_path(f)]
     js_set = set(js_files)
     for rel in js_files:

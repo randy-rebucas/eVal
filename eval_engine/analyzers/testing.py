@@ -217,8 +217,10 @@ def extract_routes(ctx, controllers: list[str]) -> list[tuple[str, int, str, str
 
 
 def _test_functions(tree: ast.AST) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
+    """Functions pytest/unittest would collect: named test*, and not fixtures (``@pytest.fixture def test_user``)."""
     return [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
-            and n.name.startswith("test")]
+            and n.name.startswith("test")
+            and not any("fixture" in ast.unparse(d.func if isinstance(d, ast.Call) else d) for d in n.decorator_list)]
 
 
 @register

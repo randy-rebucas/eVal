@@ -4,8 +4,9 @@ Sources: ``request.args/form/values/json/data/cookies/headers/files`` (Flask, al
 ``get_json()``), ``request.GET/POST/COOKIES/META/body`` (Django), ``request.query_params/path_params`` and the
 parameters of FastAPI/Flask route handlers (``@app.get(...)``, ``@router.post(...)``, ``@app.route(...)``).
 
-Propagation (intra-procedural, flow-insensitive within a function): assignments, augmented assignments, f-strings,
-``+`` / ``%`` / ``.format()``, ``str()``, ``"".join()``, subscripts and string methods of tainted values. Results
+Propagation (intra-procedural, flow-insensitive within a function): assignments, augmented assignments, walrus,
+loop and comprehension variables over tainted iterables, f-strings, ``+`` / ``%`` / ``.format()``, ``str()``,
+``"".join()``, ``a or b`` defaults, subscripts and string methods of tainted values. Results
 of other function calls are *not* tainted, and ``int()``, ``float()``, ``uuid.UUID()``, ``secure_filename()``,
 ``shlex.quote()``, ``html.escape()`` / ``escape()``, ``os.path.basename()`` and ``urllib.parse.quote()`` sanitize.
 Decoders (``base64.b64decode()``, ``unquote()``, ``zlib.decompress()``) and ``.read()`` keep the taint.
@@ -148,6 +149,8 @@ class _Function:
             if _is_validation(node.test):  # `x if is_safe(x) else default` / `x if x.startswith("/") else ...`
                 return self.source(node.orelse)
             return self.source(node.body) or self.source(node.orelse)
+        if isinstance(node, ast.BoolOp):  # `request.args.get("next") or "/"`
+            return next((s for v in node.values if (s := self.source(v))), None)
         if isinstance(node, ast.List | ast.Tuple):
             return next((s for e in node.elts if (s := self.source(e))), None)
         return None
@@ -163,17 +166,23 @@ class _Function:
         for p, line in params.items():
             self.tainted[p] = (f"route parameter '{p}'", line)
             self.paths[p] = []
-        assigns = [n for n in ast.walk(self.func) if isinstance(n, ast.Assign | ast.AugAssign | ast.AnnAssign)]
+        # (targets, value) bindings: assignments, walrus, and loop/comprehension variables over a tainted iterable.
+        bindings: list[tuple[list[ast.expr], ast.expr | None]] = []
+        for n in ast.walk(self.func):
+            if isinstance(n, ast.Assign):
+                bindings.append((n.targets, n.value))
+            elif isinstance(n, ast.AugAssign | ast.AnnAssign | ast.NamedExpr):
+                bindings.append(([n.target], n.value))
+            elif isinstance(n, ast.For | ast.AsyncFor | ast.comprehension):
+                bindings.append(([n.target], n.iter))
         for _ in range(4):  # fixpoint over a few rounds (loops, out-of-order assignments)
             changed = False
-            for node in assigns:
-                value = node.value
+            for targets, value in bindings:
                 if value is None:
                     continue
                 origin = self.source(value)
-                if isinstance(node, ast.AugAssign) and not origin:
+                if not origin:
                     continue
-                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
                 for t in targets:
                     for name in [n.id for n in ast.walk(t) if isinstance(n, ast.Name)]:
                         if origin and name not in self.tainted:
@@ -201,7 +210,7 @@ class _Function:
             return None
         return node if json_tainted(node) else None
 
-    def sinks(self, mongo: bool = False):
+    def sinks(self, mongo: bool = False, flask_session: bool = False):
         for node in ast.walk(self.func):
             if not isinstance(node, ast.Call):
                 continue
@@ -237,7 +246,8 @@ class _Function:
                     hit = (NOSQL, part)
             elif file_call and first is not None:
                 hit = (PATH, first)
-            elif fname in HTTP_FUNCS and root in HTTP_MODULES and (first is not None or "url" in kw):
+            elif fname in HTTP_FUNCS and root in HTTP_MODULES and (first is not None or "url" in kw) \
+                    and _http_receiver(node.func, root, fname, flask_session):
                 target = kw.get("url") or (node.args[1] if fname == "request" and len(node.args) > 1 else first)
                 hit = (SSRF, target)
             elif fname in ("render_template_string", "Template") and first is not None:
@@ -257,13 +267,31 @@ VALIDATORS = {"startswith", "endswith", "fullmatch", "match", "isdigit", "isalnu
 
 
 def _is_validation(test) -> bool:
-    """A condition that checks the value (allow-list membership, prefix/regex checks, URL safety helpers)."""
+    """A condition that checks the value (allow-list membership, prefix/regex checks, URL safety helpers).
+
+    ``x in ALLOWED`` validates ``x``; ``"cmd" in request.form`` only checks that a key is present."""
     for n in ast.walk(test):
         if isinstance(n, ast.Call) and _name(n.func) in VALIDATORS:
             return True
-        if isinstance(n, ast.Compare) and any(isinstance(op, ast.In) for op in n.ops):
+        if isinstance(n, ast.Compare) and any(isinstance(op, ast.In) for op in n.ops) \
+                and not isinstance(n.left, ast.Constant):
             return True
     return False
+
+
+def _http_receiver(func, root: str, fname: str, flask_session: bool) -> bool:
+    """Whether ``root.….fname(...)`` is an outbound HTTP call rather than a dict-like lookup.
+
+    ``request`` is only ``urllib.request`` when ``urlopen`` is called on it (``request.args.get`` and
+    ``request.session.get`` read the incoming request), and ``session`` is Flask's cookie session, not a
+    ``requests.Session``, when the module imports it from Flask."""
+    if root == "request":
+        return fname == "urlopen"
+    if root == "session" and flask_session:
+        return False
+    # `requests.get` / `session.get`, not `requests.foo.get` style chains through other attributes.
+    return not (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Attribute)
+                and _root(func) in ("request", "session"))
 
 
 def _guarded(func, call) -> bool:
@@ -336,13 +364,15 @@ class TaintAnalyzer(Analyzer):
             tree = ctx.python_ast(rel)
             if tree is None:
                 continue
+            flask_session = any(isinstance(n, ast.ImportFrom) and n.module in ("flask", "quart")
+                                and any(a.name == "session" for a in n.names) for n in ast.walk(tree))
             for func in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]:
                 analysis = _Function(func)
                 analysis.propagate(_route_params(func))
                 if not analysis.tainted and not any(_root(n) == "request" for n in ast.walk(func)
                                                     if isinstance(n, ast.Attribute)):
                     continue
-                for sink, call, (origin, src_line), chain in analysis.sinks(mongo):
+                for sink, call, (origin, src_line), chain in analysis.sinks(mongo, flask_session):
                     via = " → ".join(dict.fromkeys(chain)) if chain else "directly"
                     trace = f"{origin} (line {src_line}) → {via} → {_name(call.func)}() (line {call.lineno})"
                     findings.append(self.finding(

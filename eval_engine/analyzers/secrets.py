@@ -14,7 +14,10 @@ TEXT_SUFFIXES = (
     ".py", ".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".go", ".rb", ".java", ".kt", ".cs", ".php", ".rs",
     ".yml", ".yaml", ".json", ".toml", ".ini", ".cfg", ".conf", ".env", ".properties", ".xml", ".tf", ".sh",
     ".bash", ".ps1", ".txt", ".md", ".dockerfile", ".gradle", ".swift", ".scala",
+    # Key material: private keys are usually committed as files of their own.
+    ".pem", ".key", ".p8", ".ppk", ".asc",
 )
+KEY_FILE_NAMES = ("id_rsa", "id_dsa", "id_ecdsa", "id_ed25519")
 PROVIDER_PATTERNS = [(n, p) for n, p in SECRET_PATTERNS if n not in REDACT_ONLY | {"url_credentials"}]
 ASSIGNMENT = re.compile(
     r"""(?ix)
@@ -26,7 +29,7 @@ ASSIGNMENT = re.compile(
 )
 URL_CREDS = re.compile(r"\b[a-z][a-z0-9+.\-]*://(?P<user>[^\s:/@'\"]+):(?P<pw>[^\s@/'\"]{3,})@[^\s'\"]+", re.I)
 PLACEHOLDER = re.compile(
-    r"(?i)^(?:x+|\*+|\.+|<.*>|\$\{.*\}|\{\{.*\}\}|%\(.*\)s|changeme|change_me|example|placeholder|dummy|test|"
+    r"(?i)^(?:x+|\*+|\.+|<.*>|\$\{.*\}|\{.*\}|%\(.*\)s|changeme|change_me|example|placeholder|dummy|test|"
     r"your[_-]?.*|redacted|null|none|undefined|password|secret|todo|fixme|replace[_-]?me|xxx.*|sample.*)$"
 )
 # Lower-case words joined by - or _ (e.g. "hardcoded-secret", "client_credentials") are identifiers or labels,
@@ -79,7 +82,8 @@ class SecretsAnalyzer(Analyzer):
                         evidence=f"{rel} is present in the repository",
                     )
                 )
-            if not (rel.lower().endswith(TEXT_SUFFIXES) or name.startswith((".env", "Dockerfile"))):
+            if not (rel.lower().endswith(TEXT_SUFFIXES) or name.startswith((".env", "Dockerfile"))
+                    or name in KEY_FILE_NAMES):
                 continue
             if name.endswith((".lock", "-lock.json", ".min.js")) or name == "package-lock.json":
                 continue

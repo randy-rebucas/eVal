@@ -83,19 +83,19 @@ class AuthSecurityAnalyzer(Analyzer):
         profile = ctx.profile
         findings: list = []
         middleware_lists: list[tuple[str, int]] = []
-        corpus_parts: list[str] = []
+        trees: list[ast.Module] = []
         for rel in ctx.python_files():
             if is_test_path(rel):
                 continue
             tree = ctx.python_ast(rel)
             if tree is None:
                 continue
-            corpus_parts.append(ctx.read(rel) or "")
+            trees.append(tree)
             findings.extend(self._python(ctx, rel, tree, profile, middleware_lists))
         js_files = [f for f in ctx.files_with_suffix(*JS_SUFFIXES) if not is_test_path(f)]
         for rel in js_files:
             findings.extend(self._js(ctx, rel, profile))
-        findings.extend(self._django_csrf_middleware(ctx, profile, middleware_lists, "\n".join(corpus_parts)))
+        findings.extend(self._django_csrf_middleware(ctx, profile, middleware_lists, trees))
         findings.extend(self._express_csrf(ctx, profile, js_files))
         findings.extend(self._password_storage(ctx, profile))
         return findings
@@ -190,9 +190,15 @@ class AuthSecurityAnalyzer(Analyzer):
         return out
 
     # ------------------------------------------------------------------------------------- project level
-    def _django_csrf_middleware(self, ctx, profile, middleware_lists, corpus):
-        if not (profile.cookie_auth and "django" in profile.web_frameworks) or not middleware_lists \
-                or "CsrfViewMiddleware" in corpus:
+    def _django_csrf_middleware(self, ctx, profile, middleware_lists, trees):
+        if not (profile.cookie_auth and "django" in profile.web_frameworks) or not middleware_lists:
+            return []
+        # Code only (string literals and names, no comments): a commented-out entry is the usual way this goes wrong.
+        if any("CsrfViewMiddleware" in str(n.value if isinstance(n, ast.Constant) else
+                                           n.id if isinstance(n, ast.Name) else n.attr if isinstance(n, ast.Attribute)
+                                           else " ".join(a.name for a in n.names))
+               for tree in trees for n in ast.walk(tree)
+               if isinstance(n, ast.Constant | ast.Name | ast.Attribute | ast.ImportFrom | ast.Import)):
             return []
         rel, line = middleware_lists[0]
         return [self._f(ctx, "auth.django-csrf-middleware-missing", "Django CsrfViewMiddleware is not enabled",

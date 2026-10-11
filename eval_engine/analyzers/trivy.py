@@ -51,7 +51,9 @@ class TrivyAnalyzer(Analyzer):
             ignore.write_text("", encoding="utf-8")
             args = ["fs", "--config", str(config), "--ignorefile", str(ignore),
                     "--scanners", "vuln,misconfig,secret", "--format", "json", "--quiet", "--exit-code", "0",
-                    "--skip-dirs", "node_modules", "--skip-dirs", ".venv",
+                    # Glob forms also skip nested installs (frontend/node_modules, services/api/.venv).
+                    "--skip-dirs", "node_modules", "--skip-dirs", "**/node_modules",
+                    "--skip-dirs", ".venv", "--skip-dirs", "**/.venv",
                     "--timeout", f"{max(ctx.timeout - 10, 30)}s"]
             cache = os.environ.get("EVAL_TRIVY_CACHE_DIR")
             if cache:
