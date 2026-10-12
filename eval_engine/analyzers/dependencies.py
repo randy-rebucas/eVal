@@ -798,7 +798,8 @@ def lock_versions(ctx: AnalyzerContext, rel: str) -> dict[str, set[str]]:
         for path, meta in (data.get("packages") or {}).items() if isinstance(data, dict) else []:
             if path and isinstance(meta, dict) and meta.get("version") and "node_modules/" in path \
                     and not meta.get("link"):
-                versions[path.rsplit("node_modules/", 1)[-1]].add(str(meta["version"]))
+                # An aliased install ("x": "npm:real@1") lives under node_modules/x; `name` holds the real package.
+                versions[meta.get("name") or path.rsplit("node_modules/", 1)[-1]].add(str(meta["version"]))
     elif name == "yarn.lock":
         for pkg, ver, _ in parse_yarn_lock(text):
             versions[pkg].add(ver)

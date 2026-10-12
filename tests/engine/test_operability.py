@@ -10,7 +10,7 @@ from eval_engine.analyzers import registry
 from eval_engine.analyzers.ai_code import RegistryAnalyzer
 from eval_engine.analyzers.base import AnalyzerContext
 from eval_engine.analyzers.dependencies import collect_pinned, satisfies
-from eval_engine.languages import detect
+from eval_engine.languages import detect, js_registry_packages
 from eval_engine.pipeline import run_analyzer
 from eval_engine.reports import render
 from eval_engine.workspace import iter_files
@@ -272,6 +272,27 @@ def test_collect_pinned_reads_yarn_pnpm_and_pipfile_locks(tmp_path):
     pinned = {(eco, name, ver) for eco, name, ver, _ in collect_pinned(ctx_for(tmp_path))}
     assert {("npm", "@scope/pkg", "1.2.0"), ("npm", "left-pad", "1.3.0"), ("npm", "express", "4.19.2"),
             ("npm", "@babel/core", "7.24.0"), ("npm", "lodash", "4.17.21"), ("PyPI", "django", "4.2.11")} <= pinned
+
+
+def test_npm_aliases_resolve_to_the_real_package(tmp_path):
+    """`"ts-native": "npm:typescript@7.0.2"` installs typescript: registry checks, OSV and duplicate detection must
+    look at typescript, not at the alias name (which may not exist on npm, or be a different package)."""
+    write(tmp_path, {
+        "package.json": json.dumps({"devDependencies": {
+            "typescript": "npm:@typescript/typescript6@6.0.2", "ts-native": "npm:typescript@7.0.2",
+            "zod": "4.6.6", "local-lib": "file:../lib", "shared": "workspace:*", "forked": "user/repo#main",
+        }}),
+        "package-lock.json": json.dumps({"lockfileVersion": 3, "packages": {
+            "": {"name": "app"},
+            "node_modules/typescript": {"name": "@typescript/typescript6", "version": "6.0.2"},
+            "node_modules/ts-native": {"name": "typescript", "version": "7.0.2"},
+            "node_modules/zod": {"version": "4.6.6"},
+        }}),
+    })
+    ctx = ctx_for(tmp_path)
+    assert js_registry_packages(ctx.root, ["package.json"]) == {"@typescript/typescript6", "typescript", "zod"}
+    pinned = {(name, ver) for _, name, ver, _ in collect_pinned(ctx)}
+    assert pinned == {("@typescript/typescript6", "6.0.2"), ("typescript", "7.0.2"), ("zod", "4.6.6")}
 
 
 class FakeResponse:

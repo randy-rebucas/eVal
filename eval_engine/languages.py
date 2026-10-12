@@ -158,6 +158,37 @@ def js_dependencies(root: Path, manifests: list[str]) -> set[str]:
     return deps
 
 
+# package.json specs that are not fetched from the npm registry under the declared name.
+_NPM_ALIAS = re.compile(r"^npm:((?:@[^/@\s]+/)?[^@\s]+)")
+_NON_REGISTRY_SPEC = re.compile(r"^(?:file|link|workspace|portal|patch|git(?:\+[a-z]+)?|https?|github|gitlab|"
+                                r"bitbucket):|^[\w.-]+/[\w.-]+(?:#\S*)?$", re.I)
+
+
+def js_registry_packages(root: Path, manifests: list[str]) -> set[str]:
+    """Package names as the npm registry knows them: the real package behind an alias
+    (``"ts-native": "npm:typescript@7"`` -> ``typescript``), and nothing for local, workspace, git or URL specs.
+    The declared (alias) names, which code imports, come from ``js_dependencies``."""
+    names: set[str] = set()
+    for rel in manifests:
+        if not rel.endswith("package.json"):
+            continue
+        try:
+            data = json.loads(read_text(root, rel) or "")
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        for key in ("dependencies", "devDependencies", "peerDependencies"):
+            section = data.get(key)
+            for name, spec in (section.items() if isinstance(section, dict) else []):
+                spec = spec.strip() if isinstance(spec, str) else ""
+                if alias := _NPM_ALIAS.match(spec):
+                    names.add(alias.group(1).lower())
+                elif not _NON_REGISTRY_SPEC.match(spec):
+                    names.add(name.lower())
+    return names
+
+
 def _frameworks(root: Path, manifests: list[str]) -> set[str]:
     found = set()
     for dep in python_dependencies(root, manifests):
