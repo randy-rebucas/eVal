@@ -24,7 +24,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 
 from ..findings import Category, Confidence, FindingKind, Severity
-from ..languages import js_dependencies, python_dependencies
+from ..languages import js_dependencies, js_registry_packages, python_dependencies
 from .base import Analyzer, AnalyzerContext, AnalyzerError, is_test_path
 from .registry import register
 
@@ -339,7 +339,7 @@ class AICodeAnalyzer(Analyzer):
         out = []
         manifests = ctx.languages.manifests
         py = python_dependencies(ctx.root, manifests)
-        js = js_dependencies(ctx.root, [m for m in manifests if m.endswith("package.json")])
+        js = js_registry_packages(ctx.root, [m for m in manifests if m.endswith("package.json")])
         for names, popular, eco in ((py, POPULAR_PYPI, "PyPI"), (js, POPULAR_NPM, "npm")):
             for name in sorted(names):
                 target = lookalike_of(name, popular)
@@ -511,7 +511,7 @@ class RegistryAnalyzer(Analyzer):
     def run(self, ctx: AnalyzerContext):
         manifests = ctx.languages.manifests
         packages = [("PyPI", n) for n in sorted(python_dependencies(ctx.root, manifests))]
-        packages += [("npm", n) for n in sorted(js_dependencies(ctx.root, [m for m in manifests
+        packages += [("npm", n) for n in sorted(js_registry_packages(ctx.root, [m for m in manifests
                                                                            if m.endswith("package.json")]))]
         return self.check(ctx, packages[:MAX_REGISTRY_PACKAGES])
 
